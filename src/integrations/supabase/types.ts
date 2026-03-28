@@ -136,6 +136,50 @@ export type Database = {
           },
         ]
       }
+      ambassador_withdrawal_requests: {
+        Row: {
+          id: number
+          ambassador_id: string
+          status: string
+          mobile_operator: string
+          msisdn: string
+          beneficiary_name: string
+          created_at: string
+          updated_at: string
+          admin_note: string | null
+        }
+        Insert: {
+          id?: never
+          ambassador_id: string
+          status?: string
+          mobile_operator: string
+          msisdn: string
+          beneficiary_name: string
+          created_at?: string
+          updated_at?: string
+          admin_note?: string | null
+        }
+        Update: {
+          id?: never
+          ambassador_id?: string
+          status?: string
+          mobile_operator?: string
+          msisdn?: string
+          beneficiary_name?: string
+          created_at?: string
+          updated_at?: string
+          admin_note?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ambassador_withdrawal_requests_ambassador_id_fkey"
+            columns: ["ambassador_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       delivery_zones: {
         Row: {
           city: string | null
@@ -516,6 +560,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      ambassador_confirmed_sales_count: { Args: { _uid: string }; Returns: number }
       create_order_with_items: {
         Args: {
           _customer_id: string
@@ -526,9 +571,18 @@ export type Database = {
           _delivery_fee: number
           _items: Json
           _notes: string
-          _promo_code_id: number
+          _promo_code_id: number | null
           _promo_discount: number
           _total_amount: number
+          _source_link_id: number | null
+        }
+        Returns: number
+      }
+      request_ambassador_withdrawal: {
+        Args: {
+          p_beneficiary_name: string
+          p_mobile_operator: string
+          p_msisdn: string
         }
         Returns: number
       }

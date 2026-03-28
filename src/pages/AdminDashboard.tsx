@@ -5,7 +5,7 @@ import {
   Package, Users, DollarSign, ShoppingCart, Plus, Edit, Trash2,
   LogOut, Menu, X, Tag, Truck, UserCheck, BarChart3, Save, Loader2, Check, XCircle, Image, Settings,
   AlertTriangle, Eye, TrendingUp, Calendar, Phone, MapPin, ChevronDown, ChevronUp,
-  Link2, MousePointerClick, Copy,
+  Link2, MousePointerClick, Copy, Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +51,7 @@ const menuItems = [
   { icon: Truck, label: "Livraison", id: "delivery" },
   { icon: Tag, label: "Promos", id: "promos" },
   { icon: UserCheck, label: "Ambassadeurs", id: "ambassadors" },
+  { icon: Wallet, label: "Retraits amb.", id: "withdrawals" },
   { icon: Users, label: "Clients", id: "clients" },
   { icon: Image, label: "Héros", id: "hero" },
 ];
@@ -870,6 +871,20 @@ const AdminDashboard = () => {
     refetchInterval: 20000,
   });
 
+  const { data: withdrawalRequests } = useQuery({
+    queryKey: ["admin-withdrawals"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("ambassador_withdrawal_requests")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && isAdmin,
+    refetchInterval: 20000,
+  });
+
   const { data: clients } = useQuery({
     queryKey: ["admin-clients"],
     queryFn: async () => {
@@ -1114,6 +1129,18 @@ const AdminDashboard = () => {
     const { error } = await supabase.from("promo_codes").delete().eq("id", id);
     if (error) { toast({ title: "Erreur", description: error.message, variant: "destructive" }); return; }
     queryClient.invalidateQueries({ queryKey: ["admin-promos"] });
+  };
+  const handleWithdrawalStatus = async (id: number, status: string) => {
+    const { error } = await supabase
+      .from("ambassador_withdrawal_requests")
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Demande mise à jour" });
+    queryClient.invalidateQueries({ queryKey: ["admin-withdrawals"] });
   };
   const handleToggleDZ = async (id: number, is_active: boolean) => {
     await supabase.from("delivery_zones").update({ is_active }).eq("id", id);
@@ -1920,6 +1947,80 @@ const AdminDashboard = () => {
                 orders={allOrders as Array<Record<string, unknown>>}
                 promos={(promoCodes || []) as Array<Record<string, unknown>>}
               />
+            </motion.div>
+          )}
+
+          {/* ============ RETRAITS AMBASSADEURS ============ */}
+          {activeTab === "withdrawals" && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="font-display text-xl font-bold">Retraits Mobile Money</h3>
+                <Badge variant="secondary">
+                  {(withdrawalRequests || []).filter((w: { status: string }) => w.status === "pending").length} en attente
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Les ambassadeurs peuvent demander un retrait après 10 commandes confirmées. Vérifiez les ventes puis marquez payé ou refusé.
+              </p>
+              <div className="vsm-card overflow-hidden">
+                <table className="w-full">
+                  <thead className="border-b border-border bg-secondary">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">#</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Date</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Ambassadeur</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Opérateur</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Numéro</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Bénéficiaire</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(withdrawalRequests || []).map((w: Tables<"ambassador_withdrawal_requests">) => {
+                      const prof = (clients || []).find((c) => c.id === w.ambassador_id);
+                      const ambLabel = prof?.full_name || prof?.name || w.ambassador_id.slice(0, 8) + "…";
+                      const opLabel =
+                        w.mobile_operator === "airtel"
+                          ? "Airtel"
+                          : w.mobile_operator === "mpesa"
+                            ? "M-Pesa"
+                            : w.mobile_operator === "orange"
+                              ? "Orange"
+                              : w.mobile_operator;
+                      return (
+                        <tr key={w.id} className="border-b border-border last:border-0">
+                          <td className="px-4 py-4 font-medium">{w.id}</td>
+                          <td className="px-4 py-4 text-sm text-muted-foreground">{formatDate(w.created_at)}</td>
+                          <td className="px-4 py-4 text-sm">{ambLabel}</td>
+                          <td className="px-4 py-4 text-sm">{opLabel}</td>
+                          <td className="px-4 py-4 font-mono text-sm">{w.msisdn}</td>
+                          <td className="px-4 py-4 text-sm">{w.beneficiary_name}</td>
+                          <td className="px-4 py-4">
+                            <Select
+                              value={w.status}
+                              onValueChange={(v) => handleWithdrawalStatus(w.id, v)}
+                              disabled={w.status === "paid" || w.status === "rejected"}
+                            >
+                              <SelectTrigger className="h-8 w-[140px]">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="pending">En attente</SelectItem>
+                                <SelectItem value="approved">Approuvée</SelectItem>
+                                <SelectItem value="paid">Payée</SelectItem>
+                                <SelectItem value="rejected">Refusée</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {(withdrawalRequests || []).length === 0 && (
+                  <p className="py-8 text-center text-muted-foreground">Aucune demande de retrait.</p>
+                )}
+              </div>
             </motion.div>
           )}
 

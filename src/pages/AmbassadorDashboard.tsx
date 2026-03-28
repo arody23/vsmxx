@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -10,15 +10,37 @@ import {
   Plus,
   DollarSign,
   ExternalLink,
+  Wallet,
+  Smartphone,
+  Percent,
+  Tag,
 } from "lucide-react";
 import { VsmBrandMark } from "@/components/VsmBrandMark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
 
 interface TrackingLink {
   id: number;
@@ -50,18 +72,35 @@ interface OrderRow {
   created_at: string | null;
 }
 
+type WithdrawalRow = Tables<"ambassador_withdrawal_requests">;
+
 const CONFIRMED_STATUSES = ["traitée", "expédiée"];
-const COMMISSION_RATE = 0.1; // 10% (can be moved to settings later)
+const COMMISSION_RATE = 0.1;
+const COMMISSION_PERCENT = Math.round(COMMISSION_RATE * 100);
+const MIN_ORDERS_FOR_WITHDRAWAL = 10;
+
+const OPERATOR_LABELS: Record<string, string> = {
+  airtel: "Airtel Money",
+  mpesa: "M-Pesa",
+  orange: "Orange Money",
+};
 
 const AmbassadorDashboard = () => {
   const { user, signOut, isAmbassador, loading } = useAuth();
   const navigate = useNavigate();
+  const [dashTab, setDashTab] = useState("overview");
   const [trackingLinks, setTrackingLinks] = useState<TrackingLink[]>([]);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
   const [clicks, setClicks] = useState<ClickRow[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRow[]>([]);
   const [newLinkCode, setNewLinkCode] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [withdrawOperator, setWithdrawOperator] = useState<string>("mpesa");
+  const [withdrawMsisdn, setWithdrawMsisdn] = useState("");
+  const [withdrawBeneficiary, setWithdrawBeneficiary] = useState("");
+  const [submittingWithdraw, setSubmittingWithdraw] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -76,16 +115,10 @@ const AmbassadorDashboard = () => {
     }
   }, [user, loading, isAmbassador, navigate]);
 
-  useEffect(() => {
-    if (user && isAmbassador) {
-      fetchData();
-    }
-  }, [user, isAmbassador]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!user) return;
 
-    const [linksResult, codesResult, ordersResult] = await Promise.all([
+    const [linksResult, codesResult] = await Promise.all([
       supabase
         .from("ambassador_links")
         .select("*")
@@ -96,15 +129,11 @@ const AmbassadorDashboard = () => {
         .select("*")
         .eq("ambassador_id", user.id)
         .order("created_at", { ascending: false }),
-      supabase
-        .from("orders")
-        .select("id, total_amount, status, ambassador_id, promo_code_id, created_at")
-        .eq("ambassador_id", user.id)
-        .order("created_at", { ascending: false }),
     ]);
 
     const links = (linksResult.data || []) as unknown as TrackingLink[];
     setTrackingLinks(links);
+
     if (codesResult.error) {
       console.error("promo_codes:", codesResult.error);
       toast({
@@ -115,9 +144,51 @@ const AmbassadorDashboard = () => {
     } else if (codesResult.data) {
       setPromoCodes(codesResult.data as unknown as PromoCode[]);
     }
-    if (ordersResult.data) setOrders(ordersResult.data as unknown as OrderRow[]);
 
-    // Fetch clicks for all ambassador links
+    const promos = (codesResult.data || []) as PromoCode[];
+    const promoIds = promos.map((c) => c.id);
+
+    let ordersQuery = supabase
+      .from("orders")
+      .select("id, total_amount, status, ambassador_id, promo_code_id, created_at")
+      .order("created_at", { ascending: false });
+
+    if (promoIds.length > 0) {
+      ordersQuery = ordersQuery.or(
+        `ambassador_id.eq.${user.id},promo_code_id.in.(${promoIds.join(",")})`
+      );
+    } else {
+      ordersQuery = ordersQuery.eq("ambassador_id", user.id);
+    }
+
+    const ordersResult = await ordersQuery;
+    if (ordersResult.error) {
+      console.error("orders:", ordersResult.error);
+      toast({
+        title: "Commandes",
+        description: ordersResult.error.message,
+        variant: "destructive",
+      });
+      setOrders([]);
+    } else {
+      setOrders((ordersResult.data || []) as unknown as OrderRow[]);
+    }
+
+    const { data: wdData, error: wdError } = await supabase
+      .from("ambassador_withdrawal_requests")
+      .select("*")
+      .eq("ambassador_id", user.id)
+      .order("created_at", { ascending: false });
+
+    if (wdError) {
+      if (wdError.code !== "PGRST116" && wdError.code !== "42P01") {
+        console.warn("withdrawals fetch:", wdError.message);
+      }
+      setWithdrawals([]);
+    } else {
+      setWithdrawals((wdData || []) as WithdrawalRow[]);
+    }
+
     if (links.length > 0) {
       const linkIds = links.map((l) => l.id);
       const { data: clicksData } = await supabase
@@ -128,9 +199,16 @@ const AmbassadorDashboard = () => {
     } else {
       setClicks([]);
     }
-  };
+  }, [user]);
 
-  // Computed stats from real DB data
+  useEffect(() => {
+    if (user && isAmbassador) {
+      fetchData();
+    }
+  }, [user, isAmbassador, fetchData]);
+
+  const promoIdSet = useMemo(() => new Set(promoCodes.map((c) => c.id)), [promoCodes]);
+
   const clicksByLink = useMemo(() => {
     const map: Record<number, number> = {};
     clicks.forEach((c) => {
@@ -139,16 +217,39 @@ const AmbassadorDashboard = () => {
     return map;
   }, [clicks]);
 
-  const confirmedOrders = orders.filter((o) => CONFIRMED_STATUSES.includes(o.status));
+  const confirmedOrders = useMemo(
+    () => orders.filter((o) => CONFIRMED_STATUSES.includes(o.status)),
+    [orders]
+  );
+
+  const salesWithMyPromo = useMemo(
+    () =>
+      confirmedOrders.filter(
+        (o) => o.promo_code_id != null && promoIdSet.has(Number(o.promo_code_id))
+      ),
+    [confirmedOrders, promoIdSet]
+  );
+
+  const salesWithoutPromoButAttributed = useMemo(
+    () => confirmedOrders.length - salesWithMyPromo.length,
+    [confirmedOrders.length, salesWithMyPromo.length]
+  );
 
   const totalClicks = clicks.length;
   const totalConversions = confirmedOrders.length;
   const totalRevenue = confirmedOrders.reduce((s, o) => s + Number(o.total_amount), 0);
-  const conversionRate = totalClicks > 0 ? ((totalConversions / totalClicks) * 100).toFixed(1) : "0";
+  const revenueFromPromoSales = salesWithMyPromo.reduce((s, o) => s + Number(o.total_amount), 0);
+  const conversionRate =
+    totalClicks > 0 ? ((totalConversions / totalClicks) * 100).toFixed(1) : "0";
   const totalPromoUsage = promoCodes.reduce((s, c) => s + c.usage_count, 0);
   const estimatedCommission = Math.floor(totalRevenue * COMMISSION_RATE);
   const activeLinks = trackingLinks.filter((l) => l.active).length;
   const activePromoCodes = promoCodes.length;
+
+  const pendingWithdrawal = withdrawals.find((w) => w.status === "pending");
+  const canRequestWithdrawal =
+    totalConversions >= MIN_ORDERS_FOR_WITHDRAWAL && !pendingWithdrawal;
+  const withdrawProgressPct = Math.min(100, (totalConversions / MIN_ORDERS_FOR_WITHDRAWAL) * 100);
 
   const createTrackingLink = async () => {
     if (!newLinkCode.trim() || !user) return;
@@ -169,14 +270,53 @@ const AmbassadorDashboard = () => {
       });
       setNewLinkCode("");
       fetchData();
-    } catch (error: any) {
-      toast({
-        title: "Erreur",
-        description: error.message || "Impossible de créer le lien.",
-        variant: "destructive",
-      });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Impossible de créer le lien.";
+      toast({ title: "Erreur", description: msg, variant: "destructive" });
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const submitWithdrawal = async () => {
+    if (!user) return;
+    const phone = withdrawMsisdn.trim();
+    const name = withdrawBeneficiary.trim();
+    if (!phone || !name) {
+      toast({
+        title: "Champs requis",
+        description: "Indiquez le numéro Mobile Money et le nom affiché lors du retrait.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSubmittingWithdraw(true);
+    try {
+      const { data, error } = await supabase.rpc("request_ambassador_withdrawal", {
+        p_mobile_operator: withdrawOperator,
+        p_msisdn: phone,
+        p_beneficiary_name: name,
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Demande envoyée",
+        description: `Réf. #${data} — notre équipe traitera votre retrait sous peu.`,
+      });
+      setWithdrawOpen(false);
+      setWithdrawMsisdn("");
+      setWithdrawBeneficiary("");
+      fetchData();
+    } catch (error: unknown) {
+      const msg =
+        error && typeof error === "object" && "message" in error
+          ? String((error as { message: string }).message)
+          : "Impossible d'enregistrer la demande.";
+      toast({ title: "Retrait", description: msg, variant: "destructive" });
+    } finally {
+      setSubmittingWithdraw(false);
     }
   };
 
@@ -188,9 +328,7 @@ const AmbassadorDashboard = () => {
     });
   };
 
-  const formatPrice = (price: number) => {
-    return price.toLocaleString("fr-CD") + " FC";
-  };
+  const formatPrice = (price: number) => price.toLocaleString("fr-CD") + " FC";
 
   const formatDate = (d: string | null) => {
     if (!d) return "";
@@ -201,12 +339,36 @@ const AmbassadorDashboard = () => {
     });
   };
 
+  const formatDateTime = (d: string | null) => {
+    if (!d) return "";
+    return new Date(d).toLocaleString("fr-FR", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   const statusBadge = (status: string) => {
     if (status === "nouvelle") return <Badge variant="secondary">Nouvelle</Badge>;
-    if (status === "traitée") return <Badge className="bg-blue-500/20 text-blue-500 hover:bg-blue-500/20">Traitée</Badge>;
-    if (status === "expédiée") return <Badge className="bg-purple-500/20 text-purple-500 hover:bg-purple-500/20">Expédiée</Badge>;
+    if (status === "traitée")
+      return <Badge className="bg-blue-500/20 text-blue-500 hover:bg-blue-500/20">Traitée</Badge>;
+    if (status === "expédiée")
+      return <Badge className="bg-purple-500/20 text-purple-500 hover:bg-purple-500/20">Expédiée</Badge>;
     if (status === "annulée") return <Badge variant="destructive">Annulée</Badge>;
     return <Badge variant="secondary">{status}</Badge>;
+  };
+
+  const withdrawalStatusBadge = (status: string) => {
+    const map: Record<string, { label: string; className: string }> = {
+      pending: { label: "En attente", className: "bg-amber-500/20 text-amber-700" },
+      approved: { label: "Approuvée", className: "bg-blue-500/20 text-blue-700" },
+      paid: { label: "Payée", className: "bg-emerald-500/20 text-emerald-700" },
+      rejected: { label: "Refusée", className: "bg-red-500/20 text-red-700" },
+    };
+    const m = map[status] || { label: status, className: "" };
+    return <Badge className={m.className}>{m.label}</Badge>;
   };
 
   if (loading) {
@@ -240,11 +402,10 @@ const AmbassadorDashboard = () => {
 
       <section className="vsm-section">
         <div className="vsm-container max-w-5xl">
-          {/* Welcome */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mb-12 text-center"
+            className="mb-10 text-center"
           >
             <p className="font-display text-sm uppercase tracking-[0.3em] text-primary">
               Tableau de bord
@@ -253,20 +414,21 @@ const AmbassadorDashboard = () => {
               Bienvenue, Ambassadeur
             </h2>
             <p className="mt-2 text-muted-foreground">
-              Suivez vos performances et gérez vos liens de promotion.
+              Ventes liées à votre code promo, commissions et demandes de retrait.
             </p>
           </motion.div>
 
-          <Tabs defaultValue="overview" className="w-full">
-            <TabsList className="w-full justify-start">
+          <Tabs value={dashTab} onValueChange={setDashTab} className="w-full">
+            <TabsList className="flex w-full flex-wrap justify-start gap-1">
               <TabsTrigger value="overview">Aperçu</TabsTrigger>
               <TabsTrigger value="links">Liens</TabsTrigger>
               <TabsTrigger value="promos">Codes promo</TabsTrigger>
               <TabsTrigger value="orders">Commandes</TabsTrigger>
+              <TabsTrigger value="withdrawals">Retraits</TabsTrigger>
             </TabsList>
 
             <TabsContent value="overview" className="mt-6 space-y-6">
-              {/* KPIs */}
+              {/* Ventes & commission — lecture claire */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -275,96 +437,236 @@ const AmbassadorDashboard = () => {
               >
                 <div className="vsm-card p-6">
                   <div className="flex items-center justify-between">
-                    <MousePointer className="h-6 w-6 text-blue-500" />
-                    <Badge variant="secondary">Trafic</Badge>
+                    <Tag className="h-6 w-6 text-primary" />
+                    <Badge variant="secondary">Code promo</Badge>
                   </div>
-                  <p className="mt-4 font-display text-3xl font-bold">{totalClicks.toLocaleString()}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">Clics totaux</p>
+                  <p className="mt-4 font-display text-3xl font-bold">{salesWithMyPromo.length}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Ventes confirmées avec votre code
+                  </p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    CA: {formatPrice(revenueFromPromoSales)}
+                  </p>
                 </div>
                 <div className="vsm-card p-6">
                   <div className="flex items-center justify-between">
                     <ShoppingCart className="h-6 w-6 text-green-500" />
-                    <Badge variant="secondary">Confirmées</Badge>
+                    <Badge variant="secondary">Total</Badge>
                   </div>
                   <p className="mt-4 font-display text-3xl font-bold">{totalConversions}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">Commandes attribuées</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Commandes confirmées (toutes sources)
+                  </p>
+                  {salesWithoutPromoButAttributed > 0 && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Dont {salesWithoutPromoButAttributed} sans code (lien / autre)
+                    </p>
+                  )}
                 </div>
                 <div className="vsm-card p-6">
                   <div className="flex items-center justify-between">
-                    <TrendingUp className="h-6 w-6 text-primary" />
-                    <Badge variant="secondary">Ratio</Badge>
+                    <Percent className="h-6 w-6 text-violet-500" />
+                    <Badge variant="secondary">Taux</Badge>
                   </div>
-                  <p className="mt-4 font-display text-3xl font-bold">{conversionRate}%</p>
-                  <p className="mt-1 text-sm text-muted-foreground">Taux de conversion</p>
+                  <p className="mt-4 font-display text-3xl font-bold">{COMMISSION_PERCENT}%</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Commission sur le CA confirmé
+                  </p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Trafic → vente: {conversionRate}% ({totalClicks} clics)
+                  </p>
                 </div>
                 <div className="vsm-card p-6">
                   <div className="flex items-center justify-between">
                     <DollarSign className="h-6 w-6 text-yellow-500" />
-                    <Badge variant="secondary">Ventes</Badge>
+                    <Badge variant="secondary">Commission</Badge>
                   </div>
-                  <p className="mt-4 font-display text-3xl font-bold">{formatPrice(totalRevenue)}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">Revenus générés</p>
+                  <p className="mt-4 font-display text-3xl font-bold text-primary">
+                    {formatPrice(estimatedCommission)}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">Estimation ({COMMISSION_PERCENT}%)</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    CA confirmé: {formatPrice(totalRevenue)}
+                  </p>
                 </div>
               </motion.div>
 
-              {/* Business cards */}
-              <div className="grid gap-4 lg:grid-cols-3">
+              <div className="grid gap-4 lg:grid-cols-2">
                 <div className="vsm-card p-6">
-                  <h3 className="font-display text-lg font-semibold">Commissions (estimées)</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Calcul: {Math.round(COMMISSION_RATE * 100)}% sur commandes confirmées.
-                  </p>
-                  <div className="mt-4 flex items-end justify-between">
-                    <p className="font-display text-3xl font-bold text-primary">{formatPrice(estimatedCommission)}</p>
-                    <span className="text-xs text-muted-foreground">{totalConversions} commandes</span>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-display text-lg font-semibold">Demande de retrait</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Mobile Money (Airtel, M-Pesa, Orange). Débloqué à partir de{" "}
+                        {MIN_ORDERS_FOR_WITHDRAWAL} commandes confirmées.
+                      </p>
+                    </div>
+                    <Wallet className="h-8 w-8 shrink-0 text-primary opacity-80" />
                   </div>
+                  <div className="mt-4 space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Progression</span>
+                      <span className="font-medium">
+                        {totalConversions}/{MIN_ORDERS_FOR_WITHDRAWAL} commandes
+                      </span>
+                    </div>
+                    <Progress value={withdrawProgressPct} className="h-2" />
+                  </div>
+                  {pendingWithdrawal && (
+                    <p className="mt-4 rounded-sm border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">
+                      Une demande est en cours de traitement (#{pendingWithdrawal.id} —{" "}
+                      {OPERATOR_LABELS[pendingWithdrawal.mobile_operator] ||
+                        pendingWithdrawal.mobile_operator}
+                      ).
+                    </p>
+                  )}
+                  <Button
+                    type="button"
+                    className="mt-4 w-full sm:w-auto"
+                    disabled={!canRequestWithdrawal}
+                    onClick={() => canRequestWithdrawal && setWithdrawOpen(true)}
+                  >
+                    Demander un retrait
+                  </Button>
+                  <Dialog open={withdrawOpen} onOpenChange={setWithdrawOpen}>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Demande de retrait</DialogTitle>
+                        <DialogDescription>
+                          Indiquez l’opérateur, le numéro de téléphone Mobile Money et le nom qui
+                          doit apparaître lors du transfert. Montant estimé côté boutique :{" "}
+                          <span className="font-semibold text-foreground">
+                            {formatPrice(estimatedCommission)}
+                          </span>{" "}
+                          (validation admin).
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="grid gap-4 py-2">
+                        <div className="grid gap-2">
+                          <Label>Opérateur</Label>
+                          <Select value={withdrawOperator} onValueChange={setWithdrawOperator}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="airtel">Airtel Money</SelectItem>
+                              <SelectItem value="mpesa">M-Pesa</SelectItem>
+                              <SelectItem value="orange">Orange Money</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="wd-phone">Numéro Mobile Money</Label>
+                          <Input
+                            id="wd-phone"
+                            inputMode="tel"
+                            autoComplete="tel"
+                            placeholder="+243… ou numéro local"
+                            value={withdrawMsisdn}
+                            onChange={(e) => setWithdrawMsisdn(e.target.value)}
+                          />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="wd-name">Nom affiché au retrait</Label>
+                          <Input
+                            id="wd-name"
+                            placeholder="Comme sur le compte Mobile Money"
+                            value={withdrawBeneficiary}
+                            onChange={(e) => setWithdrawBeneficiary(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setWithdrawOpen(false)}>
+                          Annuler
+                        </Button>
+                        <Button onClick={submitWithdrawal} disabled={submittingWithdraw}>
+                          {submittingWithdraw ? "Envoi…" : "Envoyer la demande"}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                  {!canRequestWithdrawal && !pendingWithdrawal && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Encore {Math.max(0, MIN_ORDERS_FOR_WITHDRAWAL - totalConversions)} commande
+                      {MIN_ORDERS_FOR_WITHDRAWAL - totalConversions !== 1 ? "s" : ""} confirmée
+                      {MIN_ORDERS_FOR_WITHDRAWAL - totalConversions !== 1 ? "s" : ""} pour débloquer
+                      le retrait.
+                    </p>
+                  )}
                 </div>
+
                 <div className="vsm-card p-6">
-                  <h3 className="font-display text-lg font-semibold">Ressources</h3>
-                  <div className="mt-4 grid gap-2">
-                    <div className="flex items-center justify-between text-sm">
+                  <h3 className="font-display text-lg font-semibold">Synthèse</h3>
+                  <div className="mt-4 grid gap-3 text-sm">
+                    <div className="flex justify-between border-b border-border/60 pb-2">
+                      <span className="text-muted-foreground">Clics tracking</span>
+                      <span className="font-medium">{totalClicks}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-border/60 pb-2">
+                      <span className="text-muted-foreground">Utilisations codes (compteur)</span>
+                      <span className="font-medium">{totalPromoUsage}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-border/60 pb-2">
                       <span className="text-muted-foreground">Liens actifs</span>
                       <span className="font-medium">{activeLinks}</span>
                     </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Codes promo</span>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Codes promo actifs</span>
                       <span className="font-medium">{activePromoCodes}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Utilisations codes</span>
-                      <span className="font-medium">{totalPromoUsage}</span>
                     </div>
                   </div>
                 </div>
-                <div className="vsm-card p-6">
-                  <h3 className="font-display text-lg font-semibold">Dernières commandes</h3>
-                  {orders.length === 0 ? (
-                    <p className="mt-3 text-sm text-muted-foreground">Aucune commande attribuée pour le moment.</p>
-                  ) : (
-                    <div className="mt-4 space-y-2">
-                      {orders.slice(0, 4).map((o) => (
-                        <div key={o.id} className="flex items-center justify-between rounded-sm border border-border px-3 py-2">
+              </div>
+
+              <div className="vsm-card p-6">
+                <h3 className="font-display text-lg font-semibold">Dernières commandes</h3>
+                {orders.length === 0 ? (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Aucune commande attribuée pour le moment.
+                  </p>
+                ) : (
+                  <div className="mt-4 space-y-2">
+                    {orders.slice(0, 5).map((o) => {
+                      const viaPromo =
+                        o.promo_code_id != null && promoIdSet.has(Number(o.promo_code_id));
+                      return (
+                        <div
+                          key={o.id}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-border px-3 py-2"
+                        >
                           <div>
                             <p className="text-sm font-medium">#{o.id}</p>
                             <p className="text-xs text-muted-foreground">{formatDate(o.created_at)}</p>
+                            {viaPromo && (
+                              <Badge variant="outline" className="mt-1 text-[10px]">
+                                Code promo
+                              </Badge>
+                            )}
                           </div>
                           <div className="text-right">
-                            <p className="text-sm font-semibold text-primary">{formatPrice(Number(o.total_amount || 0))}</p>
+                            <p className="text-sm font-semibold text-primary">
+                              {formatPrice(Number(o.total_amount || 0))}
+                            </p>
                             <div className="mt-1 flex justify-end">{statusBadge(o.status)}</div>
                           </div>
                         </div>
-                      ))}
-                      <Button variant="ghost" size="sm" className="w-full" onClick={() => (document.querySelector('[data-value=\"orders\"]') as HTMLElement | null)?.click()}>
-                        Voir l'historique
-                      </Button>
-                    </div>
-                  )}
-                </div>
+                      );
+                    })}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => setDashTab("orders")}
+                    >
+                      Voir tout l&apos;historique
+                    </Button>
+                  </div>
+                )}
               </div>
             </TabsContent>
 
             <TabsContent value="links" className="mt-6 space-y-6">
-              {/* Create New Link */}
               <div className="vsm-card p-4">
                 <h3 className="mb-3 font-display text-lg font-semibold">Créer un lien de tracking</h3>
                 <div className="flex gap-3">
@@ -384,7 +686,8 @@ const AmbassadorDashboard = () => {
                   </Button>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Astuce: partage ton lien public `.../a/CODE` pour attribuer automatiquement les commandes.
+                  Partagez <code className="rounded bg-muted px-1">/a/CODE</code> pour attribuer les
+                  commandes au lien.
                 </p>
               </div>
 
@@ -428,7 +731,7 @@ const AmbassadorDashboard = () => {
                 <div className="vsm-card p-8 text-center">
                   <MousePointer className="mx-auto h-12 w-12 text-muted-foreground" />
                   <p className="mt-4 text-muted-foreground">
-                    Créez votre premier lien de tracking pour commencer à suivre vos performances.
+                    Créez votre premier lien de tracking pour suivre vos campagnes.
                   </p>
                 </div>
               )}
@@ -440,7 +743,7 @@ const AmbassadorDashboard = () => {
                   <div className="vsm-card p-6">
                     <h3 className="font-display text-xl font-bold">Vos codes promo</h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Copiez vos codes et partagez-les avec votre audience.
+                      Chaque commande passée avec ce code est comptée dans « ventes avec votre code ».
                     </p>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
@@ -452,7 +755,9 @@ const AmbassadorDashboard = () => {
                             {code.discount_type === "percent"
                               ? `-${code.discount_value}%`
                               : `-${formatPrice(code.discount_value)}`}
-                            {" • "}{code.usage_count} utilisation{code.usage_count !== 1 ? "s" : ""}
+                            {" • "}
+                            {code.usage_count} utilisation{code.usage_count !== 1 ? "s" : ""}{" "}
+                            (toutes commandes)
                           </p>
                         </div>
                         <Button
@@ -466,7 +771,15 @@ const AmbassadorDashboard = () => {
                     ))}
                   </div>
                   <div className="rounded-sm bg-primary/10 p-3 text-sm text-muted-foreground">
-                    📊 <span className="font-semibold text-foreground">{totalPromoUsage}</span> utilisation{totalPromoUsage !== 1 ? "s" : ""} au total.
+                    <TrendingUp className="mr-1 inline h-4 w-4" />
+                    <span className="font-semibold text-foreground">{salesWithMyPromo.length}</span>{" "}
+                    vente{salesWithMyPromo.length !== 1 ? "s" : ""} confirmée
+                    {salesWithMyPromo.length !== 1 ? "s" : ""} avec votre code — commission estimée
+                    sur ces ventes :{" "}
+                    <span className="font-semibold text-foreground">
+                      {formatPrice(Math.floor(revenueFromPromoSales * COMMISSION_RATE))}
+                    </span>
+                    .
                   </div>
                 </>
               ) : (
@@ -480,14 +793,17 @@ const AmbassadorDashboard = () => {
               <div className="vsm-card p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h3 className="font-display text-xl font-bold">Historique des commandes attribuées</h3>
+                    <h3 className="font-display text-xl font-bold">Historique attribué</h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Basé sur `orders.ambassador_id` (commandes confirmées = {CONFIRMED_STATUSES.join(", ")}).
+                      Commandes où vous êtes crédité (lien et/ou code promo). Confirmées ={" "}
+                      {CONFIRMED_STATUSES.join(", ")}.
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Commissions estimées</p>
-                    <p className="font-display text-xl font-bold text-primary">{formatPrice(estimatedCommission)}</p>
+                    <p className="text-xs text-muted-foreground">Commission estimée (total)</p>
+                    <p className="font-display text-xl font-bold text-primary">
+                      {formatPrice(estimatedCommission)}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -503,49 +819,114 @@ const AmbassadorDashboard = () => {
                       <thead className="border-b border-border bg-secondary">
                         <tr>
                           <th className="px-4 py-3 text-left text-sm font-semibold">Commande</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold">Source</th>
                           <th className="px-4 py-3 text-left text-sm font-semibold">Date</th>
                           <th className="px-4 py-3 text-left text-sm font-semibold">Statut</th>
                           <th className="px-4 py-3 text-right text-sm font-semibold">Total</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {orders.slice(0, 25).map((o) => (
-                          <tr key={o.id} className="border-b border-border last:border-0">
-                            <td className="px-4 py-4 font-medium">#{o.id}</td>
-                            <td className="px-4 py-4 text-sm text-muted-foreground">{formatDate(o.created_at)}</td>
-                            <td className="px-4 py-4">{statusBadge(o.status)}</td>
-                            <td className="px-4 py-4 text-right font-semibold text-primary">{formatPrice(Number(o.total_amount || 0))}</td>
-                          </tr>
-                        ))}
+                        {orders.slice(0, 50).map((o) => {
+                          const viaPromo =
+                            o.promo_code_id != null && promoIdSet.has(Number(o.promo_code_id));
+                          return (
+                            <tr key={o.id} className="border-b border-border last:border-0">
+                              <td className="px-4 py-4 font-medium">#{o.id}</td>
+                              <td className="px-4 py-4">
+                                {viaPromo ? (
+                                  <Badge variant="secondary">Code promo</Badge>
+                                ) : (
+                                  <Badge variant="outline">Lien / autre</Badge>
+                                )}
+                              </td>
+                              <td className="px-4 py-4 text-sm text-muted-foreground">
+                                {formatDate(o.created_at)}
+                              </td>
+                              <td className="px-4 py-4">{statusBadge(o.status)}</td>
+                              <td className="px-4 py-4 text-right font-semibold text-primary">
+                                {formatPrice(Number(o.total_amount || 0))}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
-                  {orders.length > 25 && (
+                  {orders.length > 50 && (
                     <div className="border-t border-border p-3 text-center text-xs text-muted-foreground">
-                      Affichage des 25 dernières commandes.
+                      Affichage des 50 dernières commandes.
                     </div>
                   )}
                 </div>
               )}
             </TabsContent>
+
+            <TabsContent value="withdrawals" className="mt-6 space-y-6">
+              <div className="vsm-card p-6">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Smartphone className="h-6 w-6 text-primary" />
+                  <div>
+                    <h3 className="font-display text-xl font-bold">Mes demandes de retrait</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Statut mis à jour par l&apos;administration après vérification des ventes.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              {withdrawals.length === 0 ? (
+                <div className="vsm-card p-10 text-center text-muted-foreground">
+                  Aucune demande pour l&apos;instant. Utilisez l&apos;onglet Aperçu pour en créer
+                  une lorsque vous avez au moins {MIN_ORDERS_FOR_WITHDRAWAL} commandes confirmées.
+                </div>
+              ) : (
+                <div className="vsm-card overflow-hidden">
+                  <table className="w-full">
+                    <thead className="border-b border-border bg-secondary">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">#</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Date</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Opérateur</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Numéro</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Bénéficiaire</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Statut</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {withdrawals.map((w) => (
+                        <tr key={w.id} className="border-b border-border last:border-0">
+                          <td className="px-4 py-4 font-medium">{w.id}</td>
+                          <td className="px-4 py-4 text-sm text-muted-foreground">
+                            {formatDateTime(w.created_at)}
+                          </td>
+                          <td className="px-4 py-4 text-sm">
+                            {OPERATOR_LABELS[w.mobile_operator] || w.mobile_operator}
+                          </td>
+                          <td className="px-4 py-4 font-mono text-sm">{w.msisdn}</td>
+                          <td className="px-4 py-4 text-sm">{w.beneficiary_name}</td>
+                          <td className="px-4 py-4">{withdrawalStatusBadge(w.status)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </TabsContent>
           </Tabs>
 
-          {/* Tips */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4 }}
+            transition={{ delay: 0.2 }}
             className="mt-12"
           >
             <div className="vsm-card p-6">
               <h3 className="font-display text-lg font-semibold">
-                💡 Conseils pour maximiser vos ventes
+                Conseils pour maximiser vos ventes
               </h3>
               <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
                 <li>• Partagez votre code promo dans vos stories et bio</li>
-                <li>• Montrez les produits en action dans vos posts</li>
-                <li>• Rappelez régulièrement la réduction à vos followers</li>
-                <li>• Utilisez différents liens pour tracker vos campagnes</li>
+                <li>• Combinez lien de tracking + code pour suivre campagnes et conversions</li>
+                <li>• Rappelez la réduction à vos followers</li>
               </ul>
             </div>
           </motion.div>

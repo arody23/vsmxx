@@ -5,6 +5,8 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  // SPA : le serveur de dev / preview renvoie déjà index.html sur les routes (évite 404 au refresh).
+  appType: "spa",
   server: {
     host: "::",
     port: 8080,
