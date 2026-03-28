@@ -10,6 +10,7 @@ import {
   CheckCircle,
   Truck,
 } from "lucide-react";
+import { VsmBrandMark } from "@/components/VsmBrandMark";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -87,22 +88,19 @@ const ClientDashboard = () => {
 
   return (
     <main className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border bg-card">
-        <div className="vsm-container flex h-16 items-center justify-between">
-          <h1 className="font-display text-xl font-bold">
-            <span className="text-primary">VSM</span> Mon Compte
-          </h1>
-          <div className="flex items-center gap-4">
+      <header className="sticky top-0 z-40 border-b border-border/60 bg-background/90 shadow-sm backdrop-blur-lg">
+        <div className="vsm-container flex flex-col gap-3 py-3 sm:h-20 sm:flex-row sm:items-center sm:justify-between sm:py-0">
+          <VsmBrandMark subtitle="Mon espace" />
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <Link to="/boutique">
-              <Button variant="ghost" size="sm">
-                <ExternalLink className="mr-2 h-4 w-4" />
+              <Button variant="ghost" size="sm" className="gap-2">
+                <ExternalLink className="h-4 w-4 shrink-0" />
                 Boutique
               </Button>
             </Link>
-            <Button variant="ghost" size="sm" onClick={signOut}>
-              <LogOut className="mr-2 h-4 w-4" />
-              Déconnexion
+            <Button variant="ghost" size="sm" className="gap-2" onClick={signOut}>
+              <LogOut className="h-4 w-4 shrink-0" />
+              <span className="hidden sm:inline">Déconnexion</span>
             </Button>
           </div>
         </div>

@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { useCart } from "@/context/CartContext";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
+import { VsmBrandMark } from "@/components/VsmBrandMark";
 
 const navLinks = [
   { name: "Accueil", path: "/", icon: Home },
@@ -74,12 +75,7 @@ const Navbar = () => {
   return (
     <header className="fixed left-0 right-0 top-0 z-50 border-b border-border/60 bg-background/90 shadow-sm backdrop-blur-lg">
       <nav className="relative z-[60] vsm-container flex h-16 items-center justify-between gap-3 md:h-20">
-        <Link to="/" className="relative z-50 flex flex-col items-start leading-none">
-          <span className="font-display text-2xl font-bold tracking-[0.2em] text-primary md:text-3xl">VSM</span>
-          <span className="text-[10px] font-medium uppercase tracking-[0.35em] text-muted-foreground md:text-[11px]">
-            Collection
-          </span>
-        </Link>
+        <VsmBrandMark subtitle="Collection" className="relative z-50" />
 
         <div className="hidden items-center gap-8 md:flex">
           {navLinks.map((link) => (

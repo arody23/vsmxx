@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/sheet";
 import { Tables } from "@/integrations/supabase/types";
 import ImageUploader from "@/components/admin/ImageUploader";
+import { VsmBrandMark } from "@/components/VsmBrandMark";
 import MultiImageUploader from "@/components/admin/MultiImageUploader";
 import {
   ResponsiveContainer,
@@ -381,21 +382,31 @@ const PromoForm = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.code || !form.discount_value) return;
+    const ambassadorId = form.ambassador_id?.trim() || null;
+    if (!form.is_global && !ambassadorId) {
+      toast({ title: "Ambassadeur requis", description: "Choisissez un ambassadeur ou cochez « Code global ».", variant: "destructive" });
+      return;
+    }
     setSaving(true);
     const { data: createdPromo, error } = await supabase.from("promo_codes").insert({
-      code: form.code.toUpperCase(), discount_value: Number(form.discount_value), discount_type: form.discount_type,
-      description: form.description || null, max_usage: form.max_usage ? Number(form.max_usage) : null,
-      is_global: form.is_global, ambassador_id: form.ambassador_id || null,
+      code: form.code.toUpperCase(),
+      discount_value: Number(form.discount_value),
+      discount_type: form.discount_type,
+      description: form.description || null,
+      max_usage: form.max_usage ? Number(form.max_usage) : null,
+      is_global: form.is_global,
+      ambassador_id: form.is_global ? null : ambassadorId,
+      active: true,
     }).select("*").single();
     if (error) toast({ title: "Erreur", description: error.message, variant: "destructive" });
     else {
-      if (form.create_tracking_link && form.ambassador_id) {
+      if (form.create_tracking_link && ambassadorId) {
         const rawSlug = (form.tracking_slug || form.code || "VSM")
           .toUpperCase()
           .replace(/[^A-Z0-9]/g, "");
         const finalSlug = rawSlug.length >= 4 ? rawSlug : `${rawSlug || "VSM"}${Math.floor(100 + Math.random() * 900)}`;
         const { error: linkErr } = await supabase.from("ambassador_links").insert({
-          ambassador_id: form.ambassador_id,
+          ambassador_id: ambassadorId,
           slug: finalSlug,
           target_type: "shop",
           promo_code_id: createdPromo?.id || null,
@@ -1152,10 +1163,17 @@ const AdminDashboard = () => {
   return (
     <div className="flex min-h-screen bg-background">
       {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-border bg-card transition-transform duration-300 lg:static lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-        <div className="flex h-16 items-center justify-between border-b border-border px-4">
-          <h1 className="font-display text-xl font-bold"><span className="text-primary">VSM</span> Admin</h1>
-          <button onClick={() => setSidebarOpen(false)} className="lg:hidden"><X className="h-6 w-6" /></button>
+      <aside className={`fixed inset-y-0 left-0 z-50 w-64 max-w-[min(16rem,88vw)] transform border-r border-border bg-card transition-transform duration-300 lg:static lg:max-w-none lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
+        <div className="flex min-h-16 items-start justify-between gap-2 border-b border-border px-4 py-3">
+          <VsmBrandMark subtitle="Administration" compact />
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(false)}
+            className="shrink-0 rounded-md p-2 hover:bg-secondary lg:hidden"
+            aria-label="Fermer le menu"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
         <nav className="p-4">
           <ul className="space-y-1">
@@ -1183,11 +1201,37 @@ const AdminDashboard = () => {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-auto">
-        <header className="flex h-16 items-center justify-between border-b border-border px-4 lg:px-8">
-          <button onClick={() => setSidebarOpen(true)} className="lg:hidden"><Menu className="h-6 w-6" /></button>
-          <h2 className="font-display text-lg font-semibold capitalize">{menuItems.find(m => m.id === activeTab)?.label || activeTab}</h2>
-          <span className="text-sm text-muted-foreground">{user?.email}</span>
+      <main className="flex min-w-0 flex-1 flex-col overflow-auto">
+        <header className="sticky top-0 z-30 border-b border-border/60 bg-background/95 shadow-sm backdrop-blur-sm">
+          <div className="flex min-h-14 flex-wrap items-center gap-x-2 gap-y-2 px-3 py-2 sm:min-h-16 sm:gap-x-4 sm:px-4 lg:px-8">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="shrink-0 rounded-md p-2 hover:bg-muted lg:hidden"
+              aria-label="Ouvrir le menu"
+            >
+              <Menu className="h-6 w-6" />
+            </button>
+            <VsmBrandMark subtitle="Administration" compact className="lg:hidden" />
+            <div className="hidden min-w-0 flex-1 lg:block">
+              <p className="font-display text-[10px] uppercase tracking-[0.28em] text-primary">Module</p>
+              <h2 className="font-display truncate text-lg font-semibold capitalize md:text-xl">
+                {menuItems.find((m) => m.id === activeTab)?.label || activeTab}
+              </h2>
+            </div>
+            <div className="min-w-0 flex-1 lg:hidden">
+              <p className="font-display text-[9px] uppercase tracking-[0.28em] text-primary">Section</p>
+              <h2 className="font-display truncate text-base font-semibold capitalize">
+                {menuItems.find((m) => m.id === activeTab)?.label || activeTab}
+              </h2>
+            </div>
+            <span
+              className="w-full max-w-full truncate text-right text-[11px] text-muted-foreground sm:ml-auto sm:w-auto sm:max-w-[min(14rem,40vw)] sm:text-sm lg:max-w-xs"
+              title={user?.email ?? undefined}
+            >
+              {user?.email}
+            </span>
+          </div>
         </header>
 
         <div className="p-4 lg:p-8">
