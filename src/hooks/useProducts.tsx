@@ -3,7 +3,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { Product, ProductVariant } from "@/types/product";
 import { Tables } from "@/integrations/supabase/types";
 
-// Convert Supabase product row to our Product type
 const mapProduct = (row: Tables<"products">, variants?: ProductVariant[]): Product => {
   const productVariants = variants || [];
   const colors = [...new Set(productVariants.map(v => v.color))];
@@ -12,6 +11,7 @@ const mapProduct = (row: Tables<"products">, variants?: ProductVariant[]): Produ
 
   return {
     id: String(row.id),
+    slug: row.slug || undefined,
     name: row.name,
     description: row.description || "",
     price: Number(row.price) || 0,
@@ -60,22 +60,31 @@ export const useAllProducts = () => {
   });
 };
 
-export const useProduct = (id: string | undefined) => {
+export const useProduct = (slugOrId: string | undefined) => {
   return useQuery({
-    queryKey: ["products", id],
+    queryKey: ["products", slugOrId],
     queryFn: async () => {
-      if (!id) return null;
-      const [{ data, error }, { data: variants }] = await Promise.all([
-        supabase.from("products").select("*").eq("id", Number(id)).single(),
-        supabase.from("product_variants").select("*").eq("product_id", Number(id)),
-      ]);
+      if (!slugOrId) return null;
+      const isNumeric = /^\d+$/.test(slugOrId);
+      const productQuery = isNumeric
+        ? supabase.from("products").select("*").eq("id", Number(slugOrId)).single()
+        : supabase.from("products").select("*").eq("slug", slugOrId).single();
+
+      const { data, error } = await productQuery;
       if (error) throw error;
+      if (!data) return null;
+
+      const { data: variants } = await supabase
+        .from("product_variants")
+        .select("*")
+        .eq("product_id", data.id);
+
       const pvs: ProductVariant[] = (variants || []).map((v: any) => ({
         id: v.id, product_id: v.product_id, color: v.color, size: v.size, stock: v.stock,
       }));
-      return data ? mapProduct(data, pvs) : null;
+      return mapProduct(data, pvs);
     },
-    enabled: !!id,
+    enabled: !!slugOrId,
   });
 };
 
@@ -83,7 +92,7 @@ export const useCreateProduct = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (product: {
-      name: string; description?: string; price?: number; category?: string;
+      name: string; slug?: string; description?: string; price?: number; category?: string;
       image_url?: string; images?: string[]; stock?: number; sku?: string; is_active?: boolean;
     }) => {
       const { data, error } = await supabase.from("products").insert(product).select().single();
@@ -98,7 +107,7 @@ export const useUpdateProduct = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: { id: number } & Partial<{
-      name: string; description: string; price: number; category: string;
+      name: string; slug: string; description: string; price: number; category: string;
       image_url: string; images: string[]; stock: number; sku: string; is_active: boolean;
     }>) => {
       const { data, error } = await supabase.from("products").update(updates).eq("id", id).select().single();

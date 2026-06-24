@@ -15,8 +15,6 @@ const footerLinks = {
     { label: "Contact", to: "/contact" },
   ],
   legal: [
-    { label: "Livraison", to: "/contact" },
-    { label: "Retours & échanges", to: "/contact" },
     { label: "Devenir Ambassadeur", to: "/devenir-ambassadeur" },
   ],
 };

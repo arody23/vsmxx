@@ -158,6 +158,26 @@
   .vsm-price-strike {
     @apply text-muted-foreground line-through;
   }
+
+  .admin-shell {
+    font-family: var(--font-body);
+  }
+
+  .admin-shell h1,
+  .admin-shell h2,
+  .admin-shell h3,
+  .admin-shell h4,
+  .admin-shell th {
+    font-family: var(--font-display);
+  }
+
+  .admin-shell .admin-kicker {
+    @apply font-display text-xs uppercase tracking-[0.24em] text-primary;
+  }
+
+  .admin-shell th {
+    @apply text-xs font-semibold uppercase tracking-wider;
+  }
 }
 
 @layer utilities {

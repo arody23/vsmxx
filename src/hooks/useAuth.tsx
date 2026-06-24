@@ -16,6 +16,8 @@ interface AuthContextType {
   refreshRoles: () => Promise<AppRole[]>;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  /** Envoie l’email de réinitialisation (lien vers /reinitialiser-mot-de-passe). */
+  resetPasswordForEmail: (email: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -123,6 +125,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return { error };
   };
 
+  const resetPasswordForEmail = async (email: string) => {
+    const redirectTo = `${window.location.origin}/reinitialiser-mot-de-passe`;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    return { error };
+  };
+
   const signOut = async () => {
     await supabase.auth.signOut();
     setRoles([]);
@@ -134,7 +142,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   return (
     <AuthContext.Provider value={{
       user, session, loading, rolesLoading, roles, isAdmin, isAmbassador,
-      refreshRoles, signUp, signIn, signOut,
+      refreshRoles, signUp, signIn, resetPasswordForEmail, signOut,
     }}>
       {children}
     </AuthContext.Provider>

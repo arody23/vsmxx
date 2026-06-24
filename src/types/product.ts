@@ -20,6 +20,7 @@ export interface Product {
   sizes?: string[];
   colors?: string[];
   collectionId?: string;
+  slug?: string;
   variants?: ProductVariant[];
 }
 

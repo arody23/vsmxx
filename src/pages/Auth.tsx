@@ -25,8 +25,10 @@ const signupSchema = loginSchema.extend({
 
 const Auth = () => {
   const navigate = useNavigate();
-  const { user, signIn, signUp, isAdmin, isAmbassador, loading, rolesLoading, refreshRoles } = useAuth();
+  const { user, signIn, signUp, resetPasswordForEmail, isAdmin, isAmbassador, loading, rolesLoading, refreshRoles } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -98,6 +100,31 @@ const Auth = () => {
     }
   };
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = z.string().email("Email invalide").safeParse(forgotEmail);
+    if (!parsed.success) {
+      toast({ title: "Email invalide", description: parsed.error.issues[0]?.message ?? "Email invalide", variant: "destructive" });
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const { error } = await resetPasswordForEmail(parsed.data);
+      if (error) {
+        toast({ title: "Envoi impossible", description: error.message, variant: "destructive" });
+      } else {
+        toast({
+          title: "Email envoyé",
+          description: "Ouvre le lien reçu pour choisir un nouveau mot de passe (vérifie aussi les spams).",
+        });
+        setShowForgotPassword(false);
+        setForgotEmail("");
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   if (loading || (user && rolesLoading)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -113,16 +140,43 @@ const Auth = () => {
         <div className="vsm-container max-w-md">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="vsm-card p-8">
             <div className="mb-8 flex border-b border-border">
-              <button onClick={() => setIsLogin(true)}
+              <button type="button" onClick={() => { setIsLogin(true); setShowForgotPassword(false); }}
                 className={`flex-1 pb-4 font-display text-lg uppercase tracking-wider transition-colors ${isLogin ? "border-b-2 border-primary text-primary" : "text-muted-foreground"}`}>
                 Connexion
               </button>
-              <button onClick={() => setIsLogin(false)}
+              <button type="button" onClick={() => { setIsLogin(false); setShowForgotPassword(false); }}
                 className={`flex-1 pb-4 font-display text-lg uppercase tracking-wider transition-colors ${!isLogin ? "border-b-2 border-primary text-primary" : "text-muted-foreground"}`}>
                 Inscription
               </button>
             </div>
 
+            {showForgotPassword ? (
+            <form onSubmit={handleForgotPassword} className="space-y-5">
+              <p className="text-sm text-muted-foreground">
+                Indique l’email de ton compte : tu recevras un lien pour réinitialiser ton mot de passe.
+              </p>
+              <div>
+                <label className="mb-2 block text-sm font-medium">Adresse email</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="email"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="votre@email.com"
+                    className="pl-10"
+                    autoComplete="email"
+                  />
+                </div>
+              </div>
+              <Button type="submit" variant="hero" size="lg" className="w-full gap-2" disabled={isLoading}>
+                {isLoading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <>Envoyer le lien<ArrowRight className="h-5 w-5" /></>}
+              </Button>
+              <button type="button" onClick={() => { setShowForgotPassword(false); setForgotEmail(""); }} className="w-full text-center text-sm text-muted-foreground hover:text-primary">
+                Retour à la connexion
+              </button>
+            </form>
+            ) : (
             <form onSubmit={handleSubmit} className="space-y-5">
               {!isLogin && (
                 <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}>
@@ -169,7 +223,9 @@ const Auth = () => {
 
               {isLogin && (
                 <div className="text-right">
-                  <Link to="#" className="text-sm text-muted-foreground hover:text-primary">Mot de passe oublié?</Link>
+                  <button type="button" onClick={() => setShowForgotPassword(true)} className="text-sm text-muted-foreground hover:text-primary hover:underline">
+                    Mot de passe oublié ?
+                  </button>
                 </div>
               )}
 
@@ -179,6 +235,7 @@ const Auth = () => {
                 )}
               </Button>
             </form>
+            )}
 
             <p className="mt-6 text-center text-sm text-muted-foreground">
               {isLogin ? "Pas encore de compte?" : "Déjà inscrit?"}{" "}

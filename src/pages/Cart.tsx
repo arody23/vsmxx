@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { Button } from "@/components/ui/button";
-import { useCart } from "@/context/CartContext";
+import { cartLineKey, useCart } from "@/context/CartContext";
 import { Trash2, Plus, Minus, ShoppingBag, ArrowRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
@@ -87,7 +87,7 @@ const Cart = () => {
               <div className="space-y-4">
                 {items.map((item, index) => (
                   <motion.div
-                    key={item.id}
+                    key={cartLineKey(item)}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.1 }}
@@ -103,6 +103,11 @@ const Cart = () => {
                         <h3 className="font-display font-semibold uppercase">
                           {item.name}
                         </h3>
+                        {(item.size || item.color) && (
+                          <p className="text-xs text-muted-foreground">
+                            {[item.size, item.color].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
                         <p className="text-sm text-muted-foreground">
                           {formatPrice(item.price)}
                         </p>
@@ -110,10 +115,12 @@ const Cart = () => {
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <button
+                            type="button"
                             onClick={() =>
-                              updateQuantity(item.id, item.quantity - 1)
+                              updateQuantity(item.id, item.quantity - 1, item.size, item.color)
                             }
                             className="flex h-8 w-8 items-center justify-center rounded-sm border border-border hover:border-primary"
+                            aria-label="Diminuer la quantité"
                           >
                             <Minus className="h-4 w-4" />
                           </button>
@@ -121,17 +128,21 @@ const Cart = () => {
                             {item.quantity}
                           </span>
                           <button
+                            type="button"
                             onClick={() =>
-                              updateQuantity(item.id, item.quantity + 1)
+                              updateQuantity(item.id, item.quantity + 1, item.size, item.color)
                             }
                             className="flex h-8 w-8 items-center justify-center rounded-sm border border-border hover:border-primary"
+                            aria-label="Augmenter la quantité"
                           >
                             <Plus className="h-4 w-4" />
                           </button>
                         </div>
                         <button
-                          onClick={() => removeItem(item.id)}
+                          type="button"
+                          onClick={() => removeItem(item.id, item.size, item.color)}
                           className="text-muted-foreground hover:text-destructive"
+                          aria-label="Retirer du panier"
                         >
                           <Trash2 className="h-5 w-5" />
                         </button>

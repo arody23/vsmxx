@@ -24,6 +24,21 @@ interface CartContextType {
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
+const norm = (v?: string) => v ?? "";
+
+const sameCartLine = (
+  item: CartItem,
+  productId: string,
+  size?: string,
+  color?: string
+) =>
+  item.id === productId &&
+  norm(item.size) === norm(size) &&
+  norm(item.color) === norm(color);
+
+export const cartLineKey = (item: CartItem) =>
+  `${item.id}::${norm(item.size)}::${norm(item.color)}`;
+
 export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [items, setItems] = useState<CartItem[]>([]);
   const [promoCode, setPromoCode] = useState<string | null>(null);
@@ -34,12 +49,12 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const color = options?.color;
 
     setItems((prevItems) => {
-      const existingItem = prevItems.find(
-        (item) => item.id === product.id && item.size === size && item.color === color
+      const existingItem = prevItems.find((item) =>
+        sameCartLine(item, product.id, size, color)
       );
       if (existingItem) {
         return prevItems.map((item) =>
-          item.id === product.id && item.size === size && item.color === color
+          sameCartLine(item, product.id, size, color)
             ? { ...item, quantity: item.quantity + 1 }
             : item
         );
@@ -55,9 +70,7 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const removeItem = (productId: string, size?: string, color?: string) => {
     setItems((prevItems) =>
-      prevItems.filter((item) =>
-        !(item.id === productId && item.size === size && item.color === color)
-      )
+      prevItems.filter((item) => !sameCartLine(item, productId, size, color))
     );
   };
 
@@ -68,9 +81,7 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     setItems((prevItems) =>
       prevItems.map((item) =>
-        item.id === productId && item.size === size && item.color === color
-          ? { ...item, quantity }
-          : item
+        sameCartLine(item, productId, size, color) ? { ...item, quantity } : item
       )
     );
   };

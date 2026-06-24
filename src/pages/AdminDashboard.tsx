@@ -30,6 +30,7 @@ import { Tables } from "@/integrations/supabase/types";
 import ImageUploader from "@/components/admin/ImageUploader";
 import { VsmBrandMark } from "@/components/VsmBrandMark";
 import MultiImageUploader from "@/components/admin/MultiImageUploader";
+import { slugify } from "@/lib/slug";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -98,8 +99,9 @@ const ProductForm = ({ product, onClose }: { product?: Tables<"products"> | null
     name: product?.name || "", description: product?.description || "",
     price: product?.price ? String(product.price) : "", category: product?.category || "",
     image_url: product?.image_url || "", images: existingImages as string[],
-    sku: product?.sku || "", is_active: product?.is_active ?? true,
+    sku: product?.sku || "", slug: product?.slug || "", is_active: product?.is_active ?? true,
   });
+  const [slugTouched, setSlugTouched] = useState(!!product?.slug);
 
   const [variants, setVariants] = useState<VariantRow[]>([]);
   const [newColor, setNewColor] = useState("");
@@ -144,7 +146,7 @@ const ProductForm = ({ product, onClose }: { product?: Tables<"products"> | null
     const payload = {
       name: form.name, description: form.description || null, price: form.price ? Number(form.price) : null,
       category: form.category || null, image_url: mainImage, images: form.images.length > 0 ? form.images : null,
-      stock: totalStock, sku: form.sku || null, is_active: form.is_active,
+      stock: totalStock, sku: form.sku || null, slug: form.slug || slugify(form.name), is_active: form.is_active,
     };
     try {
       let productId: number;
@@ -179,12 +181,41 @@ const ProductForm = ({ product, onClose }: { product?: Tables<"products"> | null
         <label className="text-sm font-medium">Images du produit</label>
         <MultiImageUploader values={form.images} onChange={(urls) => setForm({ ...form, images: urls, image_url: urls[0] || "" })} folder="products" />
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2"><label className="text-sm font-medium">Nom *</label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
-        <div className="space-y-2"><label className="text-sm font-medium">SKU</label><Input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} /></div>
-        <div className="space-y-2"><label className="text-sm font-medium">Prix (FC)</label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="space-y-2 sm:col-span-2 lg:col-span-1">
+          <label className="font-display text-xs font-semibold uppercase tracking-wider">Nom *</label>
+          <Input
+            value={form.name}
+            onChange={(e) => {
+              const name = e.target.value;
+              setForm((prev) => ({
+                ...prev,
+                name,
+                slug: slugTouched ? prev.slug : slugify(name),
+              }));
+            }}
+            required
+          />
+        </div>
+        <div className="space-y-2 sm:col-span-2">
+          <label className="font-display text-xs font-semibold uppercase tracking-wider">URL du produit</label>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <span className="shrink-0 text-sm text-muted-foreground">/produit/</span>
+            <Input
+              value={form.slug}
+              onChange={(e) => {
+                setSlugTouched(true);
+                setForm({ ...form, slug: slugify(e.target.value) });
+              }}
+              placeholder="mon-hoodie-vsm"
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">Généré depuis le nom. Modifiable pour une URL lisible.</p>
+        </div>
+        <div className="space-y-2"><label className="font-display text-xs font-semibold uppercase tracking-wider">SKU</label><Input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} /></div>
+        <div className="space-y-2"><label className="font-display text-xs font-semibold uppercase tracking-wider">Prix (FC)</label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
         <div className="space-y-2">
-          <label className="text-sm font-medium">Catégorie</label>
+          <label className="font-display text-xs font-semibold uppercase tracking-wider">Catégorie</label>
           <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
             <SelectTrigger><SelectValue placeholder="Choisir" /></SelectTrigger>
             <SelectContent>{["hoodies", "t-shirts", "pantalons", "vestes", "ensembles", "accessoires"].map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
@@ -940,6 +971,13 @@ const AdminDashboard = () => {
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   });
   const monthRevenue = thisMonth.reduce((s, o) => s + Number(o.total_amount), 0);
+  const avgBasket = confirmedOrders.length > 0 ? Math.floor(totalSales / confirmedOrders.length) : 0;
+  const todayRevenue = confirmedOrders
+    .filter((o) => {
+      if (!o.created_at) return false;
+      return new Date(o.created_at).toDateString() === now.toDateString();
+    })
+    .reduce((s, o) => s + Number(o.total_amount || 0), 0);
 
   const topSellingProducts = useMemo(() => {
     const namesById = new Map<number, string>();
@@ -1021,38 +1059,6 @@ const AdminDashboard = () => {
     };
   }, [user, isAdmin, queryClient]);
 
-  const stats = [
-    {
-      label: "Revenus",
-      value: formatPrice(totalSales),
-      sub: `${formatPrice(monthRevenue)} ce mois`,
-      icon: DollarSign,
-      color: "text-primary",
-    },
-    {
-      label: "Commandes",
-      value: totalOrders,
-      sub: `${pendingOrders.length} en attente`,
-      icon: ShoppingCart,
-      color: "text-primary",
-    },
-    {
-      label: "Articles vendus",
-      value: soldUnits,
-      sub: `${inventoryUnits} restants`,
-      icon: Package,
-      color: "text-primary",
-    },
-    {
-      label: "Clients",
-      value: totalClients,
-      sub: `${pendingApps} demandes ambassadeur`,
-      icon: Users,
-      color: "text-primary",
-    },
-  ];
-
-  // Handlers
   const [dzForm, setDzForm] = useState({ name: "", city: "", price: "" });
   const handleCreateDZ = async () => {
     if (!dzForm.name) return;
@@ -1188,7 +1194,7 @@ const AdminDashboard = () => {
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="admin-shell flex min-h-screen bg-background font-body">
       {/* Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 max-w-[min(16rem,88vw)] transform border-r border-border bg-card transition-transform duration-300 lg:static lg:max-w-none lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex min-h-16 items-start justify-between gap-2 border-b border-border px-4 py-3">
@@ -1207,7 +1213,7 @@ const AdminDashboard = () => {
             {menuItems.map((item) => (
               <li key={item.id}>
                 <button onClick={() => { setActiveTab(item.id); setSidebarOpen(false); }}
-                  className={`flex w-full items-center gap-3 rounded-sm px-4 py-3 text-sm font-medium transition-colors ${activeTab === item.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary hover:text-foreground"}`}>
+                  className={`flex w-full items-center gap-3 rounded-sm px-4 py-3 font-display text-xs font-semibold uppercase tracking-wider transition-colors ${activeTab === item.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary hover:text-foreground"}`}>
                   <item.icon className="h-5 w-5" />
                   {item.label}
                   {item.id === "ambassadors" && pendingApps > 0 && <Badge variant="destructive" className="ml-auto text-[10px]">{pendingApps}</Badge>}
@@ -1229,178 +1235,75 @@ const AdminDashboard = () => {
 
       {/* Main */}
       <main className="flex min-w-0 flex-1 flex-col overflow-auto">
-        <header className="sticky top-0 z-30 border-b border-border/60 bg-background/95 shadow-sm backdrop-blur-sm">
-          <div className="flex min-h-14 flex-wrap items-center gap-x-2 gap-y-2 px-3 py-2 sm:min-h-16 sm:gap-x-4 sm:px-4 lg:px-8">
+        <header className="sticky top-0 z-30 border-b border-border/40 bg-background/90 backdrop-blur-md">
+          <div className="flex h-14 items-center gap-3 px-4 lg:px-8">
             <button
               type="button"
               onClick={() => setSidebarOpen(true)}
-              className="shrink-0 rounded-md p-2 hover:bg-muted lg:hidden"
+              className="shrink-0 rounded-lg p-2 hover:bg-muted lg:hidden"
               aria-label="Ouvrir le menu"
             >
-              <Menu className="h-6 w-6" />
+              <Menu className="h-5 w-5" />
             </button>
-            <VsmBrandMark subtitle="Administration" compact className="lg:hidden" />
-            <div className="hidden min-w-0 flex-1 lg:block">
-              <p className="font-display text-[10px] uppercase tracking-[0.28em] text-primary">Module</p>
-              <h2 className="font-display truncate text-lg font-semibold capitalize md:text-xl">
-                {menuItems.find((m) => m.id === activeTab)?.label || activeTab}
-              </h2>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate font-display text-lg font-semibold uppercase tracking-wide md:text-xl">
+                {menuItems.find((m) => m.id === activeTab)?.label || "Admin"}
+              </h1>
             </div>
-            <div className="min-w-0 flex-1 lg:hidden">
-              <p className="font-display text-[9px] uppercase tracking-[0.28em] text-primary">Section</p>
-              <h2 className="font-display truncate text-base font-semibold capitalize">
-                {menuItems.find((m) => m.id === activeTab)?.label || activeTab}
-              </h2>
-            </div>
-            <span
-              className="w-full max-w-full truncate text-right text-[11px] text-muted-foreground sm:ml-auto sm:w-auto sm:max-w-[min(14rem,40vw)] sm:text-sm lg:max-w-xs"
-              title={user?.email ?? undefined}
-            >
+            <div className="hidden max-w-[220px] truncate rounded-full border border-border/60 bg-secondary/40 px-3 py-1.5 text-xs text-muted-foreground sm:block" title={user?.email ?? undefined}>
               {user?.email}
-            </span>
+            </div>
           </div>
         </header>
 
         <div className="p-4 lg:p-8">
           {/* ============ DASHBOARD (PRO) ============ */}
           {activeTab === "dashboard" && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
-              <div className="flex flex-wrap items-end justify-between gap-4">
-                <div>
-                  <p className="font-display text-sm uppercase tracking-[0.3em] text-primary">
-                    Dashboard
-                  </p>
-                  <h3 className="mt-1 font-display text-3xl font-bold uppercase tracking-tight">
-                    Pilotage & exécution
-                  </h3>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Synthèse des ventes, commandes et stock — mise à jour automatique.
-                  </p>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                {[
+                  { icon: DollarSign, label: "Chiffre d'affaires", value: formatPrice(totalSales), hint: `${formatPrice(monthRevenue)} ce mois`, badge: "Confirmées" },
+                  { icon: ShoppingCart, label: "Commandes", value: String(totalOrders), hint: `${pendingOrders.length} en attente`, badge: pendingOrders.length > 0 ? `${pendingOrders.length} à traiter` : undefined, alert: pendingOrders.length > 0 },
+                  { icon: Package, label: "Unités vendues", value: String(soldUnits), hint: `${inventoryUnits} en stock`, badge: (lowStockProducts.length + lowStockVariants.length) > 0 ? "Stock bas" : undefined, alert: (lowStockProducts.length + lowStockVariants.length) > 0 },
+                  { icon: Users, label: "Clients", value: String(totalClients), hint: `${pendingApps} candidature(s) amb.`, badge: pendingApps > 0 ? `${pendingApps} demandes` : undefined, alert: pendingApps > 0 },
+                ].map((kpi) => (
+                  <div key={kpi.label} className="relative overflow-hidden rounded-xl border border-border/50 bg-gradient-to-br from-card to-secondary/20 p-5 shadow-sm">
+                    <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/70 via-primary/30 to-transparent" />
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="rounded-lg bg-primary/10 p-2.5">
+                        <kpi.icon className="h-5 w-5 text-primary" />
+                      </div>
+                      {kpi.badge && (
+                        <Badge variant={kpi.alert ? "destructive" : "secondary"} className="text-[10px]">{kpi.badge}</Badge>
+                      )}
                     </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" className="gap-2" onClick={() => { setEditProduct(null); setShowProductForm(true); setActiveTab("products"); }}>
-                    <Plus className="h-4 w-4" /> Nouveau produit
-                  </Button>
-                  <Button variant="outline" className="gap-2" onClick={() => { setShowPromoForm(true); setActiveTab("promos"); }}>
-                    <Tag className="h-4 w-4" /> Nouvelle promo
-                  </Button>
-                  <Button variant="outline" className="gap-2" onClick={() => setActiveTab("orders")}>
-                    <ShoppingCart className="h-4 w-4" /> Gérer commandes
-                  </Button>
-                </div>
+                    <p className="mt-4 font-display text-2xl font-bold tracking-tight">{kpi.value}</p>
+                    <p className="mt-1 text-sm font-medium text-foreground/90">{kpi.label}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{kpi.hint}</p>
+                  </div>
+                ))}
               </div>
 
-              {/* KPI row */}
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="vsm-card p-6">
-                  <div className="flex items-center justify-between">
-                    <DollarSign className="h-8 w-8 text-primary" />
-                    <Badge variant="secondary">Confirmées</Badge>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex items-center justify-between rounded-xl border border-border/50 bg-card/60 px-5 py-4">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Panier moyen</p>
+                    <p className="mt-1 font-display text-xl font-bold text-primary">{formatPrice(avgBasket)}</p>
                   </div>
-                  <p className="mt-4 font-display text-2xl font-bold">{formatPrice(totalSales)}</p>
-                  <p className="text-sm text-muted-foreground">Chiffre d’affaires total</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{formatPrice(monthRevenue)} ce mois</p>
-                        </div>
-                <div className="vsm-card p-6">
-                  <div className="flex items-center justify-between">
-                    <ShoppingCart className="h-8 w-8 text-primary" />
-                    {pendingOrders.length > 0 ? (
-                      <Badge variant="destructive">{pendingOrders.length} à traiter</Badge>
-                    ) : (
-                      <Badge variant="secondary">R.A.S</Badge>
-                    )}
-                      </div>
-                  <p className="mt-4 font-display text-2xl font-bold">{totalOrders}</p>
-                  <p className="text-sm text-muted-foreground">Commandes totales</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{pendingOrders.length} nouvelles</p>
-                  </div>
-                <div className="vsm-card p-6">
-                  <div className="flex items-center justify-between">
-                    <Package className="h-8 w-8 text-primary" />
-                    {(lowStockProducts.length > 0 || lowStockVariants.length > 0) ? (
-                      <Badge variant="destructive">Alertes</Badge>
-                    ) : (
-                      <Badge variant="secondary">OK</Badge>
-                    )}
-                  </div>
-                  <p className="mt-4 font-display text-2xl font-bold">{soldUnits}</p>
-                  <p className="text-sm text-muted-foreground">Articles vendus</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{inventoryUnits} en inventaire</p>
+                  <p className="text-xs text-muted-foreground">{confirmedOrders.length} cmd. confirmées</p>
                 </div>
-                <div className="vsm-card p-6">
-                  <div className="flex items-center justify-between">
-                    <Users className="h-8 w-8 text-primary" />
-                    {pendingApps > 0 ? (
-                      <Badge variant="destructive">{pendingApps} demandes</Badge>
-                    ) : (
-                      <Badge variant="secondary">—</Badge>
-                    )}
-                          </div>
-                  <p className="mt-4 font-display text-2xl font-bold">{totalClients}</p>
-                  <p className="text-sm text-muted-foreground">Clients</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Candidatures: {pendingApps}</p>
-                        </div>
-                    </div>
-
-              {/* Extra KPIs */}
-              <div className="grid gap-4 lg:grid-cols-3">
-                <div className="vsm-card p-6">
-                  <div className="mb-1 flex items-center justify-between">
-                    <h4 className="font-display text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                      Panier moyen (confirmées)
-                    </h4>
+                <div className="flex items-center justify-between rounded-xl border border-border/50 bg-card/60 px-5 py-4">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Aujourd'hui</p>
+                    <p className="mt-1 font-display text-xl font-bold text-primary">{formatPrice(todayRevenue)}</p>
                   </div>
-                  <p className="font-display text-2xl font-bold text-primary">
-                    {formatPrice(
-                      confirmedOrders.length > 0
-                        ? Math.floor(totalSales / confirmedOrders.length)
-                        : 0
-                    )}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Basé sur {confirmedOrders.length} commandes confirmées
-                  </p>
-                </div>
-                <div className="vsm-card p-6">
-                  <h4 className="font-display text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                    Revenus aujourd’hui (confirmées)
-                  </h4>
-                  <p className="mt-1 font-display text-2xl font-bold text-primary">
-                    {formatPrice(
-                      confirmedOrders
-                        .filter((o: any) => {
-                          if (!o.created_at) return false;
-                          const d = new Date(o.created_at);
-                          const n = new Date();
-                          return d.toDateString() === n.toDateString();
-                        })
-                        .reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0)
-                    )}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Objectif: traiter & expédier rapidement
-                  </p>
-                </div>
-                <div className="vsm-card p-6">
-                  <h4 className="font-display text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                    Actions rapides
-                  </h4>
-                  <div className="mt-4 grid gap-2">
-                    <Button variant="outline" className="justify-start gap-2" onClick={() => setActiveTab("ambassadors")}>
-                      <UserCheck className="h-4 w-4 text-primary" />
-                      Valider des ambassadeurs
-                    </Button>
-                    <Button variant="outline" className="justify-start gap-2" onClick={() => setActiveTab("delivery")}>
-                      <Truck className="h-4 w-4 text-primary" />
-                      Gérer livraison
-                    </Button>
-                  </div>
+                  <p className="text-xs text-muted-foreground">Revenus confirmés</p>
                 </div>
               </div>
 
               {/* Charts */}
               <div className="grid gap-4 lg:grid-cols-5">
-                <div className="vsm-card p-6 lg:col-span-3">
+                <div className="rounded-xl border border-border/50 bg-card p-6 lg:col-span-3">
                   <div className="mb-4 flex items-center justify-between">
                     <h4 className="font-display text-lg font-semibold">Revenus (14 jours)</h4>
                     <span className="text-xs text-muted-foreground">Confirmées uniquement</span>
@@ -1448,7 +1351,7 @@ const AdminDashboard = () => {
                         </div>
                 </div>
 
-                <div className="vsm-card p-6 lg:col-span-2">
+                <div className="rounded-xl border border-border/50 bg-card p-6 lg:col-span-2">
                   <div className="mb-4 flex items-center justify-between">
                     <h4 className="font-display text-lg font-semibold">Statuts commandes</h4>
                     <span className="text-xs text-muted-foreground">Toutes</span>
@@ -1510,7 +1413,7 @@ const AdminDashboard = () => {
               </div>
 
               <div className="grid gap-4 lg:grid-cols-5">
-                <div className="vsm-card p-6 lg:col-span-3">
+                <div className="rounded-xl border border-border/50 bg-card p-6 lg:col-span-3">
                 <div className="mb-4 flex items-center justify-between">
                     <h4 className="font-display text-lg font-semibold">Top produits (unités)</h4>
                     <span className="text-xs text-muted-foreground">Confirmées</span>
@@ -1533,7 +1436,7 @@ const AdminDashboard = () => {
                   </div>
                 </div>
 
-                <div className="vsm-card p-6 lg:col-span-2">
+                <div className="rounded-xl border border-border/50 bg-card p-6 lg:col-span-2">
                   <div className="mb-4 flex items-center justify-between">
                     <h4 className="font-display text-lg font-semibold">À traiter maintenant</h4>
                     <Button variant="ghost" size="sm" onClick={() => setActiveTab("orders")}>Voir</Button>
@@ -1590,15 +1493,14 @@ const AdminDashboard = () => {
 
           {/* ============ PRODUCTS ============ */}
           {activeTab === "products" && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display text-xl font-bold">Gestion des produits</h3>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+              <div className="flex justify-end">
                 <Dialog open={showProductForm} onOpenChange={setShowProductForm}>
                   <DialogTrigger asChild>
                     <Button className="gap-2" onClick={() => setEditProduct(null)}><Plus className="h-4 w-4" />Ajouter</Button>
                   </DialogTrigger>
-                  <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-                    <DialogHeader><DialogTitle>{editProduct ? "Modifier le produit" : "Nouveau produit"}</DialogTitle></DialogHeader>
+                  <DialogContent className="max-h-[90vh] max-w-[min(100vw-2rem,42rem)] overflow-y-auto lg:max-w-4xl">
+                    <DialogHeader><DialogTitle className="font-display text-xl uppercase tracking-wide">{editProduct ? "Modifier le produit" : "Nouveau produit"}</DialogTitle></DialogHeader>
                     <ProductForm product={editProduct} onClose={() => setShowProductForm(false)} />
                   </DialogContent>
                 </Dialog>
@@ -1661,15 +1563,12 @@ const AdminDashboard = () => {
 
           {/* ============ ORDERS ============ */}
           {activeTab === "orders" && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display text-xl font-bold">Commandes ({allOrders.length})</h3>
-                <div className="flex gap-2">
-                  {Object.entries(ORDER_STATUSES).map(([key, val]) => {
-                    const count = allOrders.filter(o => o.status === key).length;
-                    return count > 0 ? <Badge key={key} variant="secondary" className="gap-1">{val.label} <span className="font-bold">{count}</span></Badge> : null;
-                  })}
-                </div>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {Object.entries(ORDER_STATUSES).map(([key, val]) => {
+                  const count = allOrders.filter(o => o.status === key).length;
+                  return count > 0 ? <Badge key={key} variant="secondary" className="gap-1">{val.label} <span className="font-bold">{count}</span></Badge> : null;
+                })}
               </div>
               <div className="vsm-card overflow-hidden">
                 <div className="overflow-x-auto">

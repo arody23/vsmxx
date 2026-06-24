@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
+import { getProductPath } from "@/lib/slug";
 import { Product } from "@/types/product";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/context/CartContext";
@@ -26,7 +27,7 @@ const ProductCard = ({ product, index = 0 }: ProductCardProps) => {
       className="vsm-card group"
     >
       {/* Image */}
-      <Link to={`/produit/${product.id}`} className="relative block aspect-[3/4] overflow-hidden">
+      <Link to={getProductPath(product)} className="relative block aspect-[3/4] overflow-hidden">
         <img
           src={product.image}
           alt={product.name}
@@ -51,7 +52,7 @@ const ProductCard = ({ product, index = 0 }: ProductCardProps) => {
 
       {/* Info */}
       <div className="space-y-2 p-4">
-        <Link to={`/produit/${product.id}`}>
+        <Link to={getProductPath(product)}>
           <h3 className="font-display text-lg font-semibold uppercase tracking-wide hover:text-primary">
             {product.name}
           </h3>
