@@ -141,7 +141,7 @@ const AdminAmbassadorDetail = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="admin-shell min-h-screen bg-background">
       <header className="border-b border-border bg-card">
         <div className="vsm-container flex h-16 flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">

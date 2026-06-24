@@ -5,7 +5,7 @@ import {
   Package, Users, DollarSign, ShoppingCart, Plus, Edit, Trash2,
   LogOut, Menu, X, Tag, Truck, UserCheck, BarChart3, Save, Loader2, Check, XCircle, Image, Settings,
   AlertTriangle, Eye, TrendingUp, Calendar, Phone, MapPin, ChevronDown, ChevronUp,
-  Link2, MousePointerClick, Copy, Wallet,
+  Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,13 +19,6 @@ import { useAllProducts, useCreateProduct, useUpdateProduct, useDeleteProduct } 
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { Tables } from "@/integrations/supabase/types";
 import ImageUploader from "@/components/admin/ImageUploader";
 import { VsmBrandMark } from "@/components/VsmBrandMark";
@@ -514,291 +507,6 @@ const PromoForm = ({
   );
 };
 
-/** Panneau latéral : vue globale d’un ambassadeur (tracking, promos, ventes, tendance). */
-const AmbassadorAdminDetailSheet = ({
-  application,
-  open,
-  onOpenChange,
-  orders,
-  promos,
-}: {
-  application: Record<string, unknown> | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  orders: Array<Record<string, unknown>>;
-  promos: Array<Record<string, unknown>>;
-}) => {
-  const userId = application?.user_id ? String(application.user_id) : null;
-
-  const { data: links, isLoading: linksLoading } = useQuery({
-    queryKey: ["admin-ambassador-links-detail", userId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("ambassador_links")
-        .select("*")
-        .eq("ambassador_id", userId!)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: open && !!userId,
-  });
-
-  const linkIds = useMemo(() => (links || []).map((l: { id: number }) => l.id), [links]);
-
-  const { data: clicks } = useQuery({
-    queryKey: ["admin-ambassador-clicks-detail", [...linkIds].sort((a, b) => a - b).join(",")],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("ambassador_clicks")
-        .select("id, link_id, clicked_at")
-        .in("link_id", linkIds);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: open && linkIds.length > 0,
-  });
-
-  const ambassadorOrders = useMemo(
-    () => (userId ? orders.filter((o) => String(o.ambassador_id) === userId) : []),
-    [orders, userId]
-  );
-
-  const ambassadorPromos = useMemo(
-    () => (userId ? promos.filter((p) => p.ambassador_id != null && String(p.ambassador_id) === userId) : []),
-    [promos, userId]
-  );
-
-  const confirmedStatuses = ["traitée", "expédiée"];
-  const confirmedAmbOrders = ambassadorOrders.filter((o) => confirmedStatuses.includes(String(o.status)));
-  const caAmb = confirmedAmbOrders.reduce((s, o) => s + Number(o.total_amount || 0), 0);
-  const totalClicks = (clicks || []).length;
-
-  const clicksByLinkId = useMemo(() => {
-    const m = new Map<number, number>();
-    (clicks || []).forEach((c: { link_id: number }) => {
-      m.set(c.link_id, (m.get(c.link_id) || 0) + 1);
-    });
-    return m;
-  }, [clicks]);
-
-  const evolutionData = useMemo(() => {
-    const byMonth = new Map<string, { month: string; ca: number; orders: number }>();
-    ambassadorOrders.forEach((o) => {
-      if (!o.created_at || !confirmedStatuses.includes(String(o.status))) return;
-      const d = new Date(String(o.created_at));
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const label = d.toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
-      const cur = byMonth.get(key) || { month: label, ca: 0, orders: 0 };
-      cur.ca += Number(o.total_amount || 0);
-      cur.orders += 1;
-      byMonth.set(key, cur);
-    });
-    return Array.from(byMonth.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([, v]) => v);
-  }, [ambassadorOrders]);
-
-  const copyText = (text: string) => {
-    void navigator.clipboard.writeText(text);
-    toast({ title: "Copié" });
-  };
-
-  if (!application) return null;
-
-  const fullName = String(application.full_name ?? "—");
-  const username = application.username ? `@${String(application.username).replace(/^@/, "")}` : "—";
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-y-auto border-l border-border sm:max-w-xl" onOpenAutoFocus={(e) => e.preventDefault()}>
-        <SheetHeader className="border-b border-border pb-4 text-left">
-          <SheetTitle className="font-display text-xl">Fiche ambassadeur</SheetTitle>
-          <SheetDescription>
-            Suivi des performances, liens de tracking et commandes attribuées.
-          </SheetDescription>
-        </SheetHeader>
-
-        <div className="mt-6 space-y-6 pb-10">
-          <div className="rounded-lg border border-border bg-card/50 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="font-display text-lg font-semibold">{fullName}</p>
-                <p className="text-sm text-primary">{username}</p>
-                <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
-                  {application.phone != null && String(application.phone) && (
-                    <span className="flex items-center gap-1">
-                      <Phone className="h-3.5 w-3.5" />
-                      {String(application.phone)}
-                    </span>
-                  )}
-                  {(application.main_platform != null && String(application.main_platform)) && (
-                    <span>Réseau : {String(application.main_platform)}</span>
-                  )}
-                </div>
-              </div>
-              <Badge variant={application.status === "approved" ? "default" : application.status === "rejected" ? "destructive" : "secondary"}>
-                {application.status === "approved" ? "Approuvé" : application.status === "rejected" ? "Refusé" : "En attente"}
-              </Badge>
-            </div>
-            {!userId && (
-              <p className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-200">
-                Aucun compte utilisateur lié — statistiques de ventes et tracking complets après rattachement à la validation.
-              </p>
-            )}
-          </div>
-
-          {userId && (
-            <>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <div className="rounded-lg border border-border bg-background p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Clics</p>
-                  <p className="font-display text-lg font-bold">{totalClicks}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-background p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Commandes</p>
-                  <p className="font-display text-lg font-bold">{ambassadorOrders.length}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-background p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">CA confirmé</p>
-                  <p className="font-display text-lg font-bold text-primary">{formatPrice(caAmb)}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-background p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Conv. (approx.)</p>
-                  <p className="font-display text-lg font-bold">
-                    {totalClicks > 0 ? `${((confirmedAmbOrders.length / totalClicks) * 100).toFixed(1)} %` : "—"}
-                  </p>
-                </div>
-              </div>
-
-              {evolutionData.length > 0 && (
-                <div className="rounded-lg border border-border p-4">
-                  <p className="mb-3 font-display text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                    Évolution du CA (confirmé)
-                  </p>
-                  <div className="h-44">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={evolutionData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                        <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-                        <YAxis tick={{ fontSize: 10 }} />
-                        <RechartsTooltip formatter={(v: number) => [formatPrice(v), "CA"]} />
-                        <Area type="monotone" dataKey="ca" stroke="hsl(var(--primary))" fill="hsl(var(--primary) / 0.15)" strokeWidth={2} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <p className="mb-2 font-display text-sm font-semibold uppercase tracking-wider">Liens de tracking</p>
-                {linksLoading ? (
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                ) : (links || []).length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Aucun lien.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {(links as Array<Record<string, unknown>>).map((link) => {
-                      const slug = String(link.slug);
-                      const url = `${window.location.origin}/a/${slug}`;
-                      const cid = Number(link.id);
-                      const n = clicksByLinkId.get(cid) ?? 0;
-                      return (
-                        <div key={cid} className="flex flex-col gap-2 rounded-md border border-border bg-secondary/30 p-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 text-sm font-medium">
-                              <Link2 className="h-4 w-4 shrink-0 text-primary" />
-                              <span className="truncate">/a/{slug}</span>
-                            </div>
-                            <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-                              <span className="flex items-center gap-1">
-                                <MousePointerClick className="h-3.5 w-3.5" />
-                                {n} clic{n !== 1 ? "s" : ""}
-                              </span>
-                              <Badge variant="outline" className="text-[10px]">{String(link.target_type)}</Badge>
-                            </div>
-                          </div>
-                          <Button type="button" variant="ghost" size="sm" className="shrink-0 gap-1" onClick={() => copyText(url)}>
-                            <Copy className="h-4 w-4" />
-                            Copier
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <p className="mb-2 font-display text-sm font-semibold uppercase tracking-wider">Codes promo dédiés</p>
-                {ambassadorPromos.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Aucun code rattaché.</p>
-                ) : (
-                  <div className="overflow-hidden rounded-md border border-border">
-                    <table className="w-full text-sm">
-                      <thead className="bg-secondary/60">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-medium">Code</th>
-                          <th className="px-3 py-2 text-left font-medium">Réduction</th>
-                          <th className="px-3 py-2 text-left font-medium">Util.</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ambassadorPromos.map((p) => (
-                          <tr key={String(p.id)} className="border-t border-border">
-                            <td className="px-3 py-2 font-medium text-primary">{String(p.code)}</td>
-                            <td className="px-3 py-2">
-                              {String(p.discount_type) === "percent" ? `${p.discount_value}%` : formatPrice(Number(p.discount_value))}
-                            </td>
-                            <td className="px-3 py-2">{String(p.usage_count ?? 0)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <p className="mb-2 font-display text-sm font-semibold uppercase tracking-wider">Commandes attribuées</p>
-                {ambassadorOrders.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Aucune commande pour cet ambassadeur.</p>
-                ) : (
-                  <div className="max-h-60 overflow-auto rounded-md border border-border">
-                    <table className="w-full text-sm">
-                      <thead className="sticky top-0 bg-secondary/80">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-medium">ID</th>
-                          <th className="px-3 py-2 text-left font-medium">Date</th>
-                          <th className="px-3 py-2 text-left font-medium">Statut</th>
-                          <th className="px-3 py-2 text-right font-medium">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ambassadorOrders.map((o) => (
-                          <tr key={String(o.id)} className="border-t border-border">
-                            <td className="px-3 py-2">#{String(o.id)}</td>
-                            <td className="px-3 py-2 text-muted-foreground">
-                              {o.created_at ? formatDate(String(o.created_at)) : "—"}
-                            </td>
-                            <td className="px-3 py-2">
-                              <Badge variant="outline" className="text-[10px]">{String(o.status)}</Badge>
-                            </td>
-                            <td className="px-3 py-2 text-right font-medium">{formatPrice(Number(o.total_amount || 0))}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      </SheetContent>
-    </Sheet>
-  );
-};
-
 // =================== Main Admin Dashboard ===================
 const VALID_ADMIN_TABS = new Set(menuItems.map((m) => m.id));
 
@@ -812,7 +520,6 @@ const AdminDashboard = () => {
   const [showProductForm, setShowProductForm] = useState(false);
   const [showPromoForm, setShowPromoForm] = useState(false);
   const [promoDefaultAmbassadorId, setPromoDefaultAmbassadorId] = useState<string | undefined>(undefined);
-  const [ambassadorSheetApp, setAmbassadorSheetApp] = useState<Record<string, unknown> | null>(null);
   const [expandedOrder, setExpandedOrder] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
@@ -1507,55 +1214,50 @@ const AdminDashboard = () => {
               </div>
               {productsLoading ? (
                 <div className="flex justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+              ) : (products || []).length === 0 ? (
+                <p className="py-12 text-center text-muted-foreground">Aucun produit. Ajoutez-en un!</p>
               ) : (
-                <div className="vsm-card overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="border-b border-border bg-secondary">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-sm font-semibold">Produit</th>
-                          <th className="px-4 py-3 text-left text-sm font-semibold">Catégorie</th>
-                          <th className="px-4 py-3 text-left text-sm font-semibold">Prix</th>
-                          <th className="px-4 py-3 text-left text-sm font-semibold">Stock</th>
-                          <th className="px-4 py-3 text-left text-sm font-semibold">Statut</th>
-                          <th className="px-4 py-3 text-right text-sm font-semibold">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(products || []).map((product) => (
-                          <tr key={product.id} className="border-b border-border last:border-0">
-                            <td className="px-4 py-4">
-                              <div className="flex items-center gap-3">
-                                {product.image_url ? <img src={product.image_url} alt={product.name} className="h-12 w-12 rounded-sm object-cover" /> : <div className="flex h-12 w-12 items-center justify-center rounded-sm bg-secondary"><Image className="h-5 w-5 text-muted-foreground" /></div>}
-                                <span className="font-medium">{product.name}</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 capitalize text-muted-foreground">{product.category || "—"}</td>
-                            <td className="px-4 py-4 font-semibold text-primary">{product.price ? formatPrice(Number(product.price)) : "—"}</td>
-                            <td className="px-4 py-4">
-                              <span className={`font-medium ${(product.stock ?? 0) <= 5 ? "text-red-500" : ""}`}>{product.stock ?? 0}</span>
-                            </td>
-                            <td className="px-4 py-4">
-                              <span className={`rounded-full px-2 py-1 text-xs font-medium ${product.is_active ? "bg-green-500/20 text-green-500" : "bg-red-500/20 text-red-500"}`}>
-                                {product.is_active ? "Actif" : "Inactif"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-4">
-                              <div className="flex justify-end gap-2">
-                                <button className="rounded-sm p-2 hover:bg-secondary" onClick={() => { setEditProduct(product); setShowProductForm(true); }}><Edit className="h-4 w-4 text-muted-foreground" /></button>
-                                <button className="rounded-sm p-2 hover:bg-destructive/20" onClick={async () => {
-                                  if (confirm("Supprimer ce produit ?")) {
-                                    try { await deleteProduct.mutateAsync(product.id); toast({ title: "Produit supprimé" }); } catch (err: any) { toast({ title: "Erreur", description: err.message, variant: "destructive" }); }
-                                  }
-                                }}><Trash2 className="h-4 w-4 text-destructive" /></button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {(products || []).length === 0 && <p className="py-8 text-center text-muted-foreground">Aucun produit. Ajoutez-en un!</p>}
-                  </div>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {(products || []).map((product) => (
+                    <div key={product.id} className="group vsm-card overflow-hidden">
+                      <div className="relative aspect-[4/5] bg-secondary">
+                        {product.image_url ? (
+                          <img src={product.image_url} alt={product.name} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full items-center justify-center">
+                            <Image className="h-10 w-10 text-muted-foreground" />
+                          </div>
+                        )}
+                        <span className={`absolute left-3 top-3 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${product.is_active ? "bg-emerald-500/90 text-white" : "bg-red-500/90 text-white"}`}>
+                          {product.is_active ? "Actif" : "Inactif"}
+                        </span>
+                        <div className="absolute inset-x-0 bottom-0 flex justify-end gap-1 bg-gradient-to-t from-background/90 to-transparent p-3 opacity-0 transition-opacity group-hover:opacity-100">
+                          <button type="button" className="rounded-sm bg-card p-2 shadow" onClick={() => { setEditProduct(product); setShowProductForm(true); }}>
+                            <Edit className="h-4 w-4" />
+                          </button>
+                          <button type="button" className="rounded-sm bg-card p-2 shadow" onClick={async () => {
+                            if (confirm("Supprimer ce produit ?")) {
+                              try { await deleteProduct.mutateAsync(product.id); toast({ title: "Produit supprimé" }); } catch (err: any) { toast({ title: "Erreur", description: err.message, variant: "destructive" }); }
+                            }
+                          }}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="space-y-1 p-4">
+                        <p className="font-display text-sm font-bold uppercase leading-tight">{product.name}</p>
+                        <p className="text-xs capitalize text-muted-foreground">{product.category || "—"}</p>
+                        <div className="flex items-center justify-between pt-2">
+                          <span className="font-display text-lg font-bold text-primary">
+                            {product.price ? formatPrice(Number(product.price)) : "—"}
+                          </span>
+                          <span className={`text-xs font-medium ${(product.stock ?? 0) <= 5 ? "text-red-500" : "text-muted-foreground"}`}>
+                            Stock {product.stock ?? 0}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </motion.div>
@@ -1753,99 +1455,43 @@ const AdminDashboard = () => {
           {/* ============ AMBASSADORS ============ */}
           {activeTab === "ambassadors" && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
                 <h3 className="font-display text-xl font-bold">Candidatures Ambassadeurs</h3>
-                <p className="max-w-xl text-sm text-muted-foreground">
-                  Cliquez sur une ligne pour ouvrir la fiche détaillée : ventes, liens, clics et codes promo.
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Cliquez sur une carte pour ouvrir la fiche complète et valider l&apos;inscription.
                 </p>
               </div>
-              <div className="vsm-card overflow-hidden">
-                <table className="w-full">
-                  <thead className="border-b border-border bg-secondary"><tr>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Nom</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Téléphone</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Plateforme</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Username</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Statut</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Fiche</th>
-                    <th className="px-4 py-3 text-right text-sm font-semibold">Actions</th>
-                  </tr></thead>
-                  <tbody>
-                    {(ambassadorApps || []).map((app) => (
-                      <tr
-                        key={app.id}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            setAmbassadorSheetApp(app as Record<string, unknown>);
-                          }
-                        }}
-                        className="cursor-pointer border-b border-border last:border-0 hover:bg-muted/50"
-                        onClick={() => setAmbassadorSheetApp(app as Record<string, unknown>)}
-                      >
-                        <td className="px-4 py-4 font-medium">{app.full_name}</td>
-                        <td className="px-4 py-4 text-muted-foreground">{app.phone}</td>
-                        <td className="px-4 py-4">{app.main_platform}</td>
-                        <td className="px-4 py-4 text-primary">@{app.username}</td>
-                        <td className="px-4 py-4">
-                          <Badge variant={app.status === "approved" ? "default" : app.status === "rejected" ? "destructive" : "secondary"}>
-                            {app.status === "approved" ? "Approuvé" : app.status === "rejected" ? "Refusé" : "En attente"}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
-                          {app.user_id ? (
-                            <Button size="sm" variant="secondary" asChild>
-                              <Link to={`/admin/ambassadeur/${app.user_id}`}>Page dédiée</Link>
-                            </Button>
-                          ) : (
-                            <span className="text-sm text-muted-foreground">—</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-4">
-                          <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                            {app.status === "pending" && (
-                              <>
-                                <Button size="sm" variant="outline" className="text-green-500" onClick={() => handleAppStatus(app.id, "approved")}><Check className="h-4 w-4" /></Button>
-                                <Button size="sm" variant="outline" className="text-red-500" onClick={() => handleAppStatus(app.id, "rejected")}><XCircle className="h-4 w-4" /></Button>
-                              </>
-                            )}
-                            {app.status === "approved" && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleCreateTrackingForAmbassador(app)}
-                                  className="text-primary"
-                                >
-                                  Lien
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => { setPromoDefaultAmbassadorId(app.user_id || undefined); setShowPromoForm(true); setActiveTab("promos"); }}
-                                  className="text-primary"
-                                >
-                                  Promo
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {(ambassadorApps || []).length === 0 && <p className="py-8 text-center text-muted-foreground">Aucune candidature.</p>}
-              </div>
-              <AmbassadorAdminDetailSheet
-                application={ambassadorSheetApp}
-                open={!!ambassadorSheetApp}
-                onOpenChange={(v) => { if (!v) setAmbassadorSheetApp(null); }}
-                orders={allOrders as Array<Record<string, unknown>>}
-                promos={(promoCodes || []) as Array<Record<string, unknown>>}
-              />
+              {(ambassadorApps || []).length === 0 ? (
+                <p className="py-12 text-center text-muted-foreground">Aucune candidature.</p>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {(ambassadorApps || []).map((app) => (
+                    <div key={app.id} className="vsm-card flex flex-col p-5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="font-display text-lg font-bold">{app.full_name}</p>
+                          <p className="text-sm text-primary">@{app.username}</p>
+                        </div>
+                        <Badge variant={app.status === "approved" ? "default" : app.status === "rejected" ? "destructive" : "secondary"}>
+                          {app.status === "approved" ? "Approuvé" : app.status === "rejected" ? "Refusé" : "En attente"}
+                        </Badge>
+                      </div>
+                      <p className="mt-3 truncate text-sm text-muted-foreground">{app.email || "—"}</p>
+                      <p className="text-sm text-muted-foreground">{app.phone} · {app.main_platform}</p>
+                      <div className="mt-5 flex flex-col gap-2">
+                        <Button variant="hero" size="sm" className="w-full" asChild>
+                          <Link to={`/admin/candidature/${app.id}`}>Ouvrir la fiche</Link>
+                        </Button>
+                        {app.user_id && app.status === "approved" && (
+                          <Button variant="outline" size="sm" className="w-full" asChild>
+                            <Link to={`/admin/ambassadeur/${app.user_id}`}>Suivi performance</Link>
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </motion.div>
           )}
 

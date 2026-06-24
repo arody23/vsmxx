@@ -16,6 +16,7 @@ import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminAmbassadorDetail from "./pages/AdminAmbassadorDetail";
+import AdminAmbassadorApplication from "./pages/AdminAmbassadorApplication";
 import AmbassadorDashboard from "./pages/AmbassadorDashboard";
 import ClientDashboard from "./pages/ClientDashboard";
 import BecomeAmbassador from "./pages/BecomeAmbassador";
@@ -44,6 +45,7 @@ const App = () => (
               <Route path="/reinitialiser-mot-de-passe" element={<ResetPassword />} />
               <Route path="/admin" element={<AdminDashboard />} />
               <Route path="/admin/ambassadeur/:userId" element={<AdminAmbassadorDetail />} />
+              <Route path="/admin/candidature/:applicationId" element={<AdminAmbassadorApplication />} />
               <Route path="/ambassadeur" element={<AmbassadorDashboard />} />
               <Route path="/a/:slug" element={<AmbassadorLink />} />
               <Route path="/mon-compte" element={<ClientDashboard />} />

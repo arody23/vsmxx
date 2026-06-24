@@ -175,6 +175,10 @@
     @apply font-display text-xs uppercase tracking-[0.24em] text-primary;
   }
 
+  .admin-shell label {
+    @apply font-display text-xs font-semibold uppercase tracking-wider;
+  }
+
   .admin-shell th {
     @apply text-xs font-semibold uppercase tracking-wider;
   }
