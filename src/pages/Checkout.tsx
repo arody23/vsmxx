@@ -40,6 +40,7 @@ const Checkout = () => {
     city: "",
     commune: "",
     deliveryDate: "",
+    deliveryTime: "",
     instructions: "",
   });
 
@@ -125,10 +126,11 @@ const Checkout = () => {
       // Look up promo_code_id if promo applied
       let promoCodeId: number | null = null;
       if (promoCode) {
+        const normalizedPromo = promoCode.trim().toUpperCase();
         const { data: promoData } = await supabase
           .from("promo_codes")
           .select("id")
-          .eq("code", promoCode)
+          .eq("code", normalizedPromo)
           .maybeSingle();
 
         if (promoData) promoCodeId = promoData.id;
@@ -147,6 +149,10 @@ const Checkout = () => {
         unit_price: item.price,
       }));
 
+      const composedDeliveryDate = formData.deliveryDate
+        ? `${formData.deliveryDate}${formData.deliveryTime ? ` ${formData.deliveryTime}` : ""}`
+        : null;
+
       const { data: orderId, error: orderError } = await (supabase as any).rpc(
         "create_order_with_items",
         {
@@ -154,7 +160,7 @@ const Checkout = () => {
           _customer_name: formData.fullName,
           _customer_phone: formData.phone,
           _delivery_address: deliveryAddr,
-          _delivery_date: formData.deliveryDate || null,
+          _delivery_date: composedDeliveryDate,
           _delivery_fee: deliveryFee,
           _notes: formData.instructions || null,
           _promo_code_id: promoCodeId,
@@ -193,6 +199,9 @@ const Checkout = () => {
       const deliveryDateInfo = formData.deliveryDate
         ? `📅 Date souhaitée: ${new Date(formData.deliveryDate).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}`
         : "";
+      const deliveryTimeInfo = formData.deliveryTime
+        ? `🕒 Heure souhaitée: ${formData.deliveryTime}`
+        : "";
 
       const message = encodeURIComponent(
         `🛍️ *NOUVELLE COMMANDE VSM #${savedOrderId}*\n\n` +
@@ -200,6 +209,7 @@ const Checkout = () => {
           `📞 *Téléphone:* ${formData.phone}\n` +
           `${locationInfo}\n` +
           `${deliveryDateInfo ? deliveryDateInfo + "\n" : ""}` +
+          `${deliveryTimeInfo ? deliveryTimeInfo + "\n" : ""}` +
           `${formData.instructions ? `📝 Instructions: ${formData.instructions}\n` : ""}` +
           `\n📦 *ARTICLES:*\n${productList}\n\n` +
           `💰 Sous-total: ${formatPrice(subtotal)}\n` +
@@ -234,10 +244,10 @@ const Checkout = () => {
   };
 
   return (
-    <main className="min-h-screen bg-background">
+    <main className="min-h-screen overflow-x-hidden bg-background">
       <Navbar />
 
-      <section className="pb-20 pt-32">
+      <section className="overflow-x-hidden pb-20 pt-32">
         <div className="vsm-container">
           <motion.h1
             initial={{ opacity: 0, y: 20 }}
@@ -252,10 +262,10 @@ const Checkout = () => {
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="mb-8 flex items-center gap-3 rounded-sm bg-primary/10 p-4"
+              className="mb-8 flex flex-wrap items-center gap-3 rounded-sm bg-primary/10 p-4"
             >
               <Gift className="h-6 w-6 text-primary" />
-              <p className="text-sm">
+              <p className="min-w-0 text-sm break-words">
                 <span className="font-semibold">Livraison offerte</span> pour les commandes supérieures à{" "}
                 <span className="font-bold text-primary">{formatPrice(FREE_DELIVERY_THRESHOLD_FC)}</span>
                 {" "}(~100 USD). Plus que{" "}
@@ -271,7 +281,7 @@ const Checkout = () => {
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="mb-8 flex items-center gap-3 rounded-sm bg-green-500/20 p-4"
+              className="mb-8 flex flex-wrap items-center gap-3 rounded-sm bg-green-500/20 p-4"
             >
               <Gift className="h-6 w-6 text-green-500" />
               <p className="text-sm font-semibold text-green-500">
@@ -280,14 +290,14 @@ const Checkout = () => {
             </motion.div>
           )}
 
-          <div className="grid gap-8 lg:grid-cols-3">
+          <div className="grid min-w-0 gap-8 lg:grid-cols-3">
             {/* Form */}
             <motion.form
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 }}
               onSubmit={handleSubmit}
-              className="lg:col-span-2"
+              className="min-w-0 lg:col-span-2"
             >
               <div className="vsm-card space-y-6 p-6">
                 <h2 className="font-display text-xl font-bold uppercase">
@@ -437,6 +447,22 @@ const Checkout = () => {
                   />
                   <p className="mt-1 text-xs text-muted-foreground">
                     Optionnel - Nous ferons de notre mieux pour respecter cette date
+                  </p>
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium">
+                    Heure de livraison souhaitée
+                  </label>
+                  <Input
+                    type="time"
+                    value={formData.deliveryTime}
+                    onChange={(e) =>
+                      setFormData({ ...formData, deliveryTime: e.target.value })
+                    }
+                    className="w-full"
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Optionnel - Exemple: 15:30
                   </p>
                 </div>
 

@@ -46,6 +46,7 @@ interface TrackingLink {
   id: number;
   slug: string;
   target_type: string;
+  promo_code_id?: number | null;
   active: boolean;
   created_at: string | null;
 }
@@ -66,6 +67,7 @@ interface ClickRow {
 interface OrderRow {
   id: number;
   total_amount: number;
+  delivery_fee: number | null;
   status: string;
   ambassador_id: string | null;
   promo_code_id: number | null;
@@ -118,50 +120,75 @@ const AmbassadorDashboard = () => {
   const fetchData = useCallback(async () => {
     if (!user) return;
 
-    const [linksResult, codesResult] = await Promise.all([
-      supabase
-        .from("ambassador_links")
-        .select("*")
-        .eq("ambassador_id", user.id)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("promo_codes")
-        .select("*")
-        .eq("ambassador_id", user.id)
-        .order("created_at", { ascending: false }),
-    ]);
+    const linksResult = await supabase
+      .from("ambassador_links")
+      .select("*")
+      .eq("ambassador_id", user.id)
+      .order("created_at", { ascending: false });
 
     const links = (linksResult.data || []) as unknown as TrackingLink[];
     setTrackingLinks(links);
 
-    if (codesResult.error) {
-      console.error("promo_codes:", codesResult.error);
-      toast({
-        title: "Codes promo",
-        description: codesResult.error.message,
-        variant: "destructive",
-      });
-    } else if (codesResult.data) {
-      setPromoCodes(codesResult.data as unknown as PromoCode[]);
-    }
-
-    const promos = (codesResult.data || []) as PromoCode[];
-    const promoIds = promos.map((c) => c.id);
-
-    let ordersQuery = supabase
-      .from("orders")
-      .select("id, total_amount, status, ambassador_id, promo_code_id, created_at")
-      .order("created_at", { ascending: false });
-
-    if (promoIds.length > 0) {
-      ordersQuery = ordersQuery.or(
-        `ambassador_id.eq.${user.id},promo_code_id.in.(${promoIds.join(",")})`
-      );
+    let promoRows: PromoCode[] = [];
+    const rpcCodesResult = await (supabase as any).rpc("ambassador_dashboard_promo_codes");
+    if (rpcCodesResult.error) {
+      console.warn("ambassador_dashboard_promo_codes RPC:", rpcCodesResult.error);
+      const codesResult = await supabase
+        .from("promo_codes")
+        .select("*")
+        .eq("ambassador_id", user.id)
+        .order("created_at", { ascending: false });
+      if (codesResult.error) {
+        console.error("promo_codes:", codesResult.error);
+        toast({
+          title: "Codes promo",
+          description: "Impossible de charger vos codes promo pour le moment.",
+          variant: "destructive",
+        });
+      } else {
+        promoRows = (codesResult.data || []) as unknown as PromoCode[];
+      }
     } else {
-      ordersQuery = ordersQuery.eq("ambassador_id", user.id);
+      promoRows = (rpcCodesResult.data || []) as PromoCode[];
     }
 
-    const ordersResult = await ordersQuery;
+    if (promoRows.length === 0) {
+      const linkPromoIds = Array.from(
+        new Set(
+          links
+            .map((l) => Number(l.promo_code_id))
+            .filter((id) => Number.isFinite(id) && id > 0)
+        )
+      );
+      if (linkPromoIds.length > 0) {
+        const fromLinksResult = await supabase
+          .from("promo_codes")
+          .select("*")
+          .in("id", linkPromoIds)
+          .order("created_at", { ascending: false });
+        if (!fromLinksResult.error && fromLinksResult.data) {
+          promoRows = fromLinksResult.data as unknown as PromoCode[];
+        }
+      }
+    }
+    setPromoCodes(promoRows);
+
+    let ordersResult = await (supabase as any).rpc("ambassador_dashboard_orders");
+    if (ordersResult.error) {
+      const promoIds = promoRows.map((c) => c.id);
+      let fallbackOrdersQuery = supabase
+        .from("orders")
+        .select("id, total_amount, delivery_fee, status, ambassador_id, promo_code_id, created_at")
+        .order("created_at", { ascending: false });
+      if (promoIds.length > 0) {
+        fallbackOrdersQuery = fallbackOrdersQuery.or(
+          `ambassador_id.eq.${user.id},promo_code_id.in.(${promoIds.join(",")})`
+        );
+      } else {
+        fallbackOrdersQuery = fallbackOrdersQuery.eq("ambassador_id", user.id);
+      }
+      ordersResult = await fallbackOrdersQuery;
+    }
     if (ordersResult.error) {
       console.error("orders:", ordersResult.error);
       toast({
@@ -237,8 +264,10 @@ const AmbassadorDashboard = () => {
 
   const totalClicks = clicks.length;
   const totalConversions = confirmedOrders.length;
-  const totalRevenue = confirmedOrders.reduce((s, o) => s + Number(o.total_amount), 0);
-  const revenueFromPromoSales = salesWithMyPromo.reduce((s, o) => s + Number(o.total_amount), 0);
+  const getNetOrderAmount = (o: OrderRow) =>
+    Number(o.total_amount || 0) - Number(o.delivery_fee || 0);
+  const totalRevenue = confirmedOrders.reduce((s, o) => s + getNetOrderAmount(o), 0);
+  const revenueFromPromoSales = salesWithMyPromo.reduce((s, o) => s + getNetOrderAmount(o), 0);
   const conversionRate =
     totalClicks > 0 ? ((totalConversions / totalClicks) * 100).toFixed(1) : "0";
   const totalPromoUsage = promoCodes.reduce((s, c) => s + c.usage_count, 0);

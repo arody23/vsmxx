@@ -5,7 +5,7 @@ import {
   Package, Users, DollarSign, ShoppingCart, Plus, Edit, Trash2,
   LogOut, Menu, X, Tag, Truck, UserCheck, BarChart3, Save, Loader2, Check, XCircle, Image, Settings,
   AlertTriangle, Eye, TrendingUp, Calendar, Phone, MapPin, ChevronDown, ChevronUp,
-  Wallet,
+  Wallet, Receipt, HandCoins, Bike,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +42,8 @@ const menuItems = [
   { icon: TrendingUp, label: "Dashboard", id: "dashboard" },
   { icon: Package, label: "Produits", id: "products" },
   { icon: ShoppingCart, label: "Commandes", id: "orders" },
+  { icon: HandCoins, label: "POS & Opérations", id: "operations" },
+  { icon: Receipt, label: "Finance Pro", id: "finance" },
   { icon: Truck, label: "Livraison", id: "delivery" },
   { icon: Tag, label: "Promos", id: "promos" },
   { icon: UserCheck, label: "Ambassadeurs", id: "ambassadors" },
@@ -521,6 +523,20 @@ const AdminDashboard = () => {
   const [showPromoForm, setShowPromoForm] = useState(false);
   const [promoDefaultAmbassadorId, setPromoDefaultAmbassadorId] = useState<string | undefined>(undefined);
   const [expandedOrder, setExpandedOrder] = useState<number | null>(null);
+  const [deliveryFeeDrafts, setDeliveryFeeDrafts] = useState<Record<number, string>>({});
+  const [expenseForm, setExpenseForm] = useState({ title: "", category: "operations", amount: "", expense_date: "", notes: "" });
+  const [courierForm, setCourierForm] = useState({ full_name: "", phone: "", notes: "" });
+  const [manualOrder, setManualOrder] = useState({
+    customer_name: "",
+    customer_phone: "",
+    delivery_address: "",
+    delivery_fee: "0",
+    order_source: "manual",
+    notes: "",
+  });
+  const [manualLines, setManualLines] = useState<Array<{ productId: string; quantity: string }>>([
+    { productId: "", quantity: "1" },
+  ]);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -534,10 +550,7 @@ const AdminDashboard = () => {
   const { data: orders } = useQuery({
     queryKey: ["admin-orders"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("orders")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const { data, error } = await (supabase as any).rpc("admin_dashboard_orders");
       if (error) throw error;
       return data || [];
     },
@@ -548,7 +561,7 @@ const AdminDashboard = () => {
   const { data: allOrderItems } = useQuery({
     queryKey: ["admin-order-items"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("order_items").select("*");
+      const { data, error } = await (supabase as any).rpc("admin_dashboard_order_items");
       if (error) throw error;
       return data || [];
     },
@@ -637,6 +650,34 @@ const AdminDashboard = () => {
     refetchInterval: 30000,
   });
 
+  const { data: expenses } = useQuery({
+    queryKey: ["admin-expenses"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("expenses")
+        .select("*")
+        .order("expense_date", { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && isAdmin,
+    refetchInterval: 30000,
+  });
+
+  const { data: couriers } = useQuery({
+    queryKey: ["admin-couriers"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("couriers")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && isAdmin,
+    refetchInterval: 30000,
+  });
+
   // Computed stats (100% basés DB) — seules les commandes confirmées comptent pour le CA
   const allOrders = orders || [];
   const allItems = allOrderItems || [];
@@ -655,14 +696,27 @@ const AdminDashboard = () => {
     }, {});
   }, [allItems]);
 
+  const getNetOrderAmount = (order: any) =>
+    Number(order.total_amount || 0) - Number(order.delivery_fee || 0);
+
   const pendingOrders = allOrders.filter((o) => o.status === "nouvelle");
-  const totalSales = confirmedOrders.reduce((sum, o) => sum + Number(o.total_amount), 0);
+  const totalSales = confirmedOrders.reduce((sum, o) => sum + getNetOrderAmount(o), 0);
   const totalOrders = allOrders.length;
   const totalProducts = (products || []).length;
   const totalClients = (clients || []).length;
   const pendingApps = (ambassadorApps || []).filter((a) => a.status === "pending").length;
   const soldUnits = confirmedItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
   const inventoryUnits = allVariants.reduce((sum, variant) => sum + Number(variant.stock || 0), 0);
+  const productById = useMemo(() => {
+    return new Map((products || []).map((p) => [Number(p.id), p]));
+  }, [products]);
+  const cogsAmount = confirmedItems.reduce((sum, item) => {
+    const itemCost = Number((item as any).unit_cost || 0);
+    const fallbackCost = Number((productById.get(Number(item.product_id)) as any)?.unit_cost || 0);
+    return sum + (itemCost || fallbackCost) * Number(item.quantity || 0);
+  }, 0);
+  const totalExpenses = (expenses || []).reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0);
+  const grossProfit = totalSales - cogsAmount - totalExpenses;
 
   // Low stock
   const lowStockProducts = (products || []).filter(
@@ -677,14 +731,14 @@ const AdminDashboard = () => {
     const d = new Date(o.created_at);
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   });
-  const monthRevenue = thisMonth.reduce((s, o) => s + Number(o.total_amount), 0);
+  const monthRevenue = thisMonth.reduce((s, o) => s + getNetOrderAmount(o), 0);
   const avgBasket = confirmedOrders.length > 0 ? Math.floor(totalSales / confirmedOrders.length) : 0;
   const todayRevenue = confirmedOrders
     .filter((o) => {
       if (!o.created_at) return false;
       return new Date(o.created_at).toDateString() === now.toDateString();
     })
-    .reduce((s, o) => s + Number(o.total_amount || 0), 0);
+    .reduce((s, o) => s + getNetOrderAmount(o), 0);
 
   const topSellingProducts = useMemo(() => {
     const namesById = new Map<number, string>();
@@ -832,6 +886,28 @@ const AdminDashboard = () => {
     toast({ title: "Statut mis à jour" });
     queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
   };
+  const handleUpdateOrderDeliveryFee = async (order: any) => {
+    const draft = deliveryFeeDrafts[order.id];
+    if (draft == null) return;
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      toast({ title: "Montant invalide", description: "Le frais de livraison doit etre un nombre >= 0.", variant: "destructive" });
+      return;
+    }
+    const previousFee = Number(order.delivery_fee || 0);
+    const previousTotal = Number(order.total_amount || 0);
+    const updatedTotal = Math.max(0, previousTotal - previousFee + parsed);
+    const { error } = await supabase
+      .from("orders")
+      .update({ delivery_fee: parsed, total_amount: updatedTotal })
+      .eq("id", order.id);
+    if (error) {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Livraison mise a jour", description: `Nouveau frais: ${formatPrice(parsed)}` });
+    queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+  };
   const handleTogglePromo = async (id: number, active: boolean) => {
     const { error } = await supabase.from("promo_codes").update({ active }).eq("id", id);
     if (error) { toast({ title: "Erreur", description: error.message, variant: "destructive" }); return; }
@@ -863,6 +939,97 @@ const AdminDashboard = () => {
     if (!confirm("Supprimer cette zone ?")) return;
     await supabase.from("delivery_zones").delete().eq("id", id);
     queryClient.invalidateQueries({ queryKey: ["admin-delivery"] });
+  };
+  const handleCreateExpense = async () => {
+    if (!expenseForm.title || !expenseForm.amount) return;
+    const { error } = await (supabase as any).from("expenses").insert({
+      title: expenseForm.title,
+      category: expenseForm.category || "operations",
+      amount: Number(expenseForm.amount),
+      expense_date: expenseForm.expense_date || new Date().toISOString().slice(0, 10),
+      notes: expenseForm.notes || null,
+      created_by: user?.id || null,
+    });
+    if (error) { toast({ title: "Erreur", description: error.message, variant: "destructive" }); return; }
+    setExpenseForm({ title: "", category: "operations", amount: "", expense_date: "", notes: "" });
+    toast({ title: "Dépense enregistrée" });
+    queryClient.invalidateQueries({ queryKey: ["admin-expenses"] });
+  };
+  const handleCreateCourier = async () => {
+    if (!courierForm.full_name) return;
+    const { error } = await (supabase as any).from("couriers").insert({
+      full_name: courierForm.full_name,
+      phone: courierForm.phone || null,
+      notes: courierForm.notes || null,
+      is_active: true,
+    });
+    if (error) { toast({ title: "Erreur", description: error.message, variant: "destructive" }); return; }
+    setCourierForm({ full_name: "", phone: "", notes: "" });
+    toast({ title: "Livreur créé" });
+    queryClient.invalidateQueries({ queryKey: ["admin-couriers"] });
+  };
+  const handleAssignCourier = async (orderId: number, courierId: string) => {
+    const value = courierId === "__none__" ? null : Number(courierId);
+    const { error } = await (supabase as any).from("orders").update({ courier_id: value }).eq("id", orderId);
+    if (error) { toast({ title: "Erreur", description: error.message, variant: "destructive" }); return; }
+    queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+  };
+  const handleOrderSource = async (orderId: number, source: string) => {
+    const { error } = await (supabase as any).from("orders").update({ order_source: source }).eq("id", orderId);
+    if (error) { toast({ title: "Erreur", description: error.message, variant: "destructive" }); return; }
+    queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+  };
+  const handleUpdateUnitCost = async (productId: number, unitCost: number) => {
+    const { error } = await (supabase as any).from("products").update({ unit_cost: unitCost }).eq("id", productId);
+    if (error) { toast({ title: "Erreur", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "Coût unitaire mis à jour" });
+    queryClient.invalidateQueries({ queryKey: ["products"] });
+  };
+  const handleCreateManualOrder = async () => {
+    if (manualLines.length === 0) return;
+    const payloadItems = manualLines
+      .map((line) => {
+        const productId = Number(line.productId);
+        const product = (products || []).find((p) => Number(p.id) === productId);
+        if (!product) return null;
+        return {
+          product_id: productId,
+          quantity: Number(line.quantity || 0),
+          unit_price: Number(product.price || 0),
+        };
+      })
+      .filter((v): v is { product_id: number; quantity: number; unit_price: number } => !!v && v.quantity > 0);
+    if (payloadItems.length === 0) {
+      toast({ title: "Articles requis", description: "Ajoutez au moins un article valide.", variant: "destructive" });
+      return;
+    }
+    const { data, error } = await (supabase as any).rpc("create_manual_order_admin", {
+      _customer_name: manualOrder.customer_name || "Client POS",
+      _customer_phone: manualOrder.customer_phone || null,
+      _delivery_address: manualOrder.delivery_address || null,
+      _delivery_fee: Number(manualOrder.delivery_fee || 0),
+      _items: payloadItems,
+      _order_source: manualOrder.order_source,
+      _notes: manualOrder.notes || null,
+      _status: "traitée",
+    });
+    if (error) {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Commande créée", description: `Commande #${data}` });
+    setManualOrder({
+      customer_name: "",
+      customer_phone: "",
+      delivery_address: "",
+      delivery_fee: "0",
+      order_source: "manual",
+      notes: "",
+    });
+    setManualLines([{ productId: "", quantity: "1" }]);
+    queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-order-items"] });
+    queryClient.invalidateQueries({ queryKey: ["products"] });
   };
 
   const handleCreateTrackingForAmbassador = async (app: any) => {
@@ -1255,6 +1422,27 @@ const AdminDashboard = () => {
                             Stock {product.stock ?? 0}
                           </span>
                         </div>
+                        <div className="mt-3 flex items-center gap-2">
+                          <Input
+                            type="number"
+                            min={0}
+                            defaultValue={String(Number((product as any).unit_cost || 0))}
+                            className="h-8 text-xs"
+                            id={`unit-cost-${product.id}`}
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 text-xs"
+                            onClick={() => {
+                              const el = document.getElementById(`unit-cost-${product.id}`) as HTMLInputElement | null;
+                              const value = Number(el?.value || 0);
+                              handleUpdateUnitCost(Number(product.id), value);
+                            }}
+                          >
+                            Coût u.
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1346,6 +1534,7 @@ const AdminDashboard = () => {
                                       <p className="text-sm text-muted-foreground">Aucun article trouvé.</p>
                                     )}
                                     <div className="grid gap-2 text-sm sm:grid-cols-3">
+                                      <div className="text-muted-foreground">Source: {(order as any).order_source || "website"}</div>
                                       {(order as any).delivery_date && (
                                         <div className="flex items-center gap-1 text-muted-foreground"><Calendar className="h-3 w-3" />Livraison: {(order as any).delivery_date}</div>
                                       )}
@@ -1359,6 +1548,66 @@ const AdminDashboard = () => {
                                     {(order as any).notes && (
                                       <p className="text-sm text-muted-foreground">📝 {(order as any).notes}</p>
                                     )}
+                                    <div className="rounded-sm border border-border bg-background p-3">
+                                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ajuster frais de livraison</p>
+                                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          className="sm:w-48"
+                                          value={deliveryFeeDrafts[order.id] ?? String(Number((order as any).delivery_fee || 0))}
+                                          onChange={(e) =>
+                                            setDeliveryFeeDrafts((prev) => ({
+                                              ...prev,
+                                              [order.id]: e.target.value,
+                                            }))
+                                          }
+                                        />
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => handleUpdateOrderDeliveryFee(order)}
+                                        >
+                                          Enregistrer
+                                        </Button>
+                                        <span className="text-xs text-muted-foreground">
+                                          Le total commande est recalcule automatiquement.
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="grid gap-2 rounded-sm border border-border bg-background p-3 md:grid-cols-2">
+                                      <div className="space-y-2">
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Source commande</p>
+                                        <Select
+                                          value={(order as any).order_source || "website"}
+                                          onValueChange={(v) => handleOrderSource(order.id, v)}
+                                        >
+                                          <SelectTrigger><SelectValue /></SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="website">Website</SelectItem>
+                                            <SelectItem value="pos">POS</SelectItem>
+                                            <SelectItem value="manual">Manuelle</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                      <div className="space-y-2">
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Livreur assigné</p>
+                                        <Select
+                                          value={(order as any).courier_id ? String((order as any).courier_id) : "__none__"}
+                                          onValueChange={(v) => handleAssignCourier(order.id, v)}
+                                        >
+                                          <SelectTrigger><SelectValue placeholder="Choisir un livreur" /></SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="__none__">Aucun</SelectItem>
+                                            {(couriers || []).map((courier: any) => (
+                                              <SelectItem key={courier.id} value={String(courier.id)}>
+                                                {courier.full_name}{courier.phone ? ` (${courier.phone})` : ""}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                    </div>
                                   </div>
                                 </td>
                               </tr>
@@ -1595,6 +1844,162 @@ const AdminDashboard = () => {
                   </tbody>
                 </table>
                 {(clients || []).length === 0 && <p className="py-8 text-center text-muted-foreground">Aucun client.</p>}
+              </div>
+            </motion.div>
+          )}
+
+          {/* ============ OPERATIONS / POS ============ */}
+          {activeTab === "operations" && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              <div className="grid gap-4 xl:grid-cols-3">
+                <div className="vsm-card p-5 xl:col-span-2">
+                  <h3 className="font-display text-xl font-bold">Créer une commande manuelle / POS</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">Utilisez cette section pour les ventes hors site et la caisse physique.</p>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <Input
+                      placeholder="Nom client"
+                      value={manualOrder.customer_name}
+                      onChange={(e) => setManualOrder((s) => ({ ...s, customer_name: e.target.value }))}
+                    />
+                    <Input
+                      placeholder="Téléphone client"
+                      value={manualOrder.customer_phone}
+                      onChange={(e) => setManualOrder((s) => ({ ...s, customer_phone: e.target.value }))}
+                    />
+                    <Input
+                      placeholder="Adresse livraison (optionnel)"
+                      value={manualOrder.delivery_address}
+                      onChange={(e) => setManualOrder((s) => ({ ...s, delivery_address: e.target.value }))}
+                    />
+                    <Input
+                      type="number"
+                      min={0}
+                      placeholder="Frais livraison"
+                      value={manualOrder.delivery_fee}
+                      onChange={(e) => setManualOrder((s) => ({ ...s, delivery_fee: e.target.value }))}
+                    />
+                    <Select value={manualOrder.order_source} onValueChange={(v) => setManualOrder((s) => ({ ...s, order_source: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="manual">Manuelle</SelectItem>
+                        <SelectItem value="pos">POS</SelectItem>
+                        <SelectItem value="website">Website</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      placeholder="Note interne"
+                      value={manualOrder.notes}
+                      onChange={(e) => setManualOrder((s) => ({ ...s, notes: e.target.value }))}
+                    />
+                  </div>
+
+                  <div className="mt-4 space-y-2">
+                    {manualLines.map((line, index) => (
+                      <div key={index} className="grid gap-2 md:grid-cols-[1fr_120px_80px]">
+                        <Select
+                          value={line.productId || "__empty__"}
+                          onValueChange={(v) =>
+                            setManualLines((prev) => prev.map((row, i) => i === index ? { ...row, productId: v === "__empty__" ? "" : v } : row))
+                          }
+                        >
+                          <SelectTrigger><SelectValue placeholder="Produit" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__empty__">Choisir un produit</SelectItem>
+                            {(products || []).map((p) => (
+                              <SelectItem key={p.id} value={String(p.id)}>
+                                {p.name} — {formatPrice(Number(p.price || 0))}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={line.quantity}
+                          onChange={(e) =>
+                            setManualLines((prev) => prev.map((row, i) => i === index ? { ...row, quantity: e.target.value } : row))
+                          }
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setManualLines((prev) => prev.filter((_, i) => i !== index))}
+                          disabled={manualLines.length === 1}
+                        >
+                          Suppr.
+                        </Button>
+                      </div>
+                    ))}
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" onClick={() => setManualLines((prev) => [...prev, { productId: "", quantity: "1" }])}>
+                        <Plus className="mr-2 h-4 w-4" />Ajouter ligne
+                      </Button>
+                      <Button type="button" onClick={handleCreateManualOrder}>
+                        Enregistrer commande
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="vsm-card p-5">
+                  <h4 className="font-display text-lg font-semibold">Comptes livreurs</h4>
+                  <div className="mt-3 space-y-2">
+                    <Input placeholder="Nom livreur" value={courierForm.full_name} onChange={(e) => setCourierForm((s) => ({ ...s, full_name: e.target.value }))} />
+                    <Input placeholder="Téléphone" value={courierForm.phone} onChange={(e) => setCourierForm((s) => ({ ...s, phone: e.target.value }))} />
+                    <Input placeholder="Note" value={courierForm.notes} onChange={(e) => setCourierForm((s) => ({ ...s, notes: e.target.value }))} />
+                    <Button className="w-full" onClick={handleCreateCourier}>Créer livreur</Button>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {(couriers || []).slice(0, 10).map((courier: any) => (
+                      <div key={courier.id} className="rounded-sm border border-border p-2 text-sm">
+                        <p className="font-medium">{courier.full_name}</p>
+                        <p className="text-xs text-muted-foreground">{courier.phone || "Sans téléphone"}</p>
+                      </div>
+                    ))}
+                    {(couriers || []).length === 0 && <p className="text-sm text-muted-foreground">Aucun livreur.</p>}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ============ FINANCE PRO ============ */}
+          {activeTab === "finance" && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="vsm-card p-5"><p className="text-xs uppercase tracking-wide text-muted-foreground">CA net (hors livraison)</p><p className="mt-2 font-display text-2xl font-bold text-primary">{formatPrice(totalSales)}</p></div>
+                <div className="vsm-card p-5"><p className="text-xs uppercase tracking-wide text-muted-foreground">COGS (coût marchandises)</p><p className="mt-2 font-display text-2xl font-bold">{formatPrice(cogsAmount)}</p></div>
+                <div className="vsm-card p-5"><p className="text-xs uppercase tracking-wide text-muted-foreground">Dépenses</p><p className="mt-2 font-display text-2xl font-bold">{formatPrice(totalExpenses)}</p></div>
+                <div className="vsm-card p-5"><p className="text-xs uppercase tracking-wide text-muted-foreground">Profit brut estimé</p><p className={`mt-2 font-display text-2xl font-bold ${grossProfit >= 0 ? "text-emerald-600" : "text-red-500"}`}>{formatPrice(grossProfit)}</p></div>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="vsm-card p-5">
+                  <h4 className="font-display text-lg font-semibold">Ajouter une dépense</h4>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <Input placeholder="Intitulé" value={expenseForm.title} onChange={(e) => setExpenseForm((s) => ({ ...s, title: e.target.value }))} />
+                    <Input placeholder="Catégorie (transport, pub...)" value={expenseForm.category} onChange={(e) => setExpenseForm((s) => ({ ...s, category: e.target.value }))} />
+                    <Input type="number" min={0} placeholder="Montant" value={expenseForm.amount} onChange={(e) => setExpenseForm((s) => ({ ...s, amount: e.target.value }))} />
+                    <Input type="date" value={expenseForm.expense_date} onChange={(e) => setExpenseForm((s) => ({ ...s, expense_date: e.target.value }))} />
+                    <Input className="sm:col-span-2" placeholder="Note" value={expenseForm.notes} onChange={(e) => setExpenseForm((s) => ({ ...s, notes: e.target.value }))} />
+                  </div>
+                  <Button className="mt-3" onClick={handleCreateExpense}>Enregistrer dépense</Button>
+                </div>
+                <div className="vsm-card p-5">
+                  <h4 className="font-display text-lg font-semibold">Dernières dépenses</h4>
+                  <div className="mt-3 space-y-2">
+                    {(expenses || []).slice(0, 12).map((exp: any) => (
+                      <div key={exp.id} className="flex items-start justify-between rounded-sm border border-border p-2">
+                        <div>
+                          <p className="text-sm font-medium">{exp.title}</p>
+                          <p className="text-xs text-muted-foreground">{exp.category} • {exp.expense_date}</p>
+                        </div>
+                        <p className="text-sm font-semibold">{formatPrice(Number(exp.amount || 0))}</p>
+                      </div>
+                    ))}
+                    {(expenses || []).length === 0 && <p className="text-sm text-muted-foreground">Aucune dépense enregistrée.</p>}
+                  </div>
+                </div>
               </div>
             </motion.div>
           )}
