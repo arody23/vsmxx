@@ -5,7 +5,7 @@ import {
   Package, Users, DollarSign, ShoppingCart, Plus, Edit, Trash2,
   LogOut, Menu, X, Tag, Truck, UserCheck, BarChart3, Save, Loader2, Check, XCircle, Image, Settings,
   AlertTriangle, Eye, TrendingUp, Calendar, Phone, MapPin, ChevronDown, ChevronUp,
-  Wallet, Receipt, HandCoins, Bike,
+  Wallet, Receipt, HandCoins, Bike, ScanLine, Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,8 @@ import ImageUploader from "@/components/admin/ImageUploader";
 import { VsmBrandMark } from "@/components/VsmBrandMark";
 import MultiImageUploader from "@/components/admin/MultiImageUploader";
 import { slugify } from "@/lib/slug";
+import { downloadBarcodeSvg } from "@/lib/barcode";
+import { getMerchandiseAmount, getCustomerPayableTotal } from "@/lib/orderAmounts";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -43,6 +45,7 @@ const menuItems = [
   { icon: Package, label: "Produits", id: "products" },
   { icon: ShoppingCart, label: "Commandes", id: "orders" },
   { icon: HandCoins, label: "POS & Opérations", id: "operations" },
+  { icon: Package, label: "Stock & codes", id: "inventory" },
   { icon: Receipt, label: "Finance Pro", id: "finance" },
   { icon: Truck, label: "Livraison", id: "delivery" },
   { icon: Tag, label: "Promos", id: "promos" },
@@ -406,6 +409,32 @@ const PromoForm = ({
     tracking_slug: "",
   });
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const loadTierDiscount = async () => {
+      if (form.is_global || !form.ambassador_id) return;
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("ambassador_tier")
+        .eq("id", form.ambassador_id)
+        .maybeSingle();
+      const tierId = (profile as { ambassador_tier?: string } | null)?.ambassador_tier || "bronze";
+      const { data: tierRow } = await (supabase as any)
+        .from("ambassador_tiers")
+        .select("client_discount_percent")
+        .eq("id", tierId)
+        .maybeSingle();
+      if (tierRow?.client_discount_percent != null) {
+        setForm((prev) => ({
+          ...prev,
+          discount_value: String(tierRow.client_discount_percent),
+          discount_type: "percent",
+        }));
+      }
+    };
+    loadTierDiscount();
+  }, [form.ambassador_id, form.is_global]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.code || !form.discount_value) return;
@@ -525,7 +554,14 @@ const AdminDashboard = () => {
   const [expandedOrder, setExpandedOrder] = useState<number | null>(null);
   const [deliveryFeeDrafts, setDeliveryFeeDrafts] = useState<Record<number, string>>({});
   const [expenseForm, setExpenseForm] = useState({ title: "", category: "operations", amount: "", expense_date: "", notes: "" });
-  const [courierForm, setCourierForm] = useState({ full_name: "", phone: "", notes: "" });
+  const [staffAccountForm, setStaffAccountForm] = useState({
+    badge: "",
+    password: "",
+    full_name: "",
+    role: "pos",
+  });
+  const [adminScanCode, setAdminScanCode] = useState("");
+  const [adminScanCart, setAdminScanCart] = useState<Array<{ variant_id: number; product_id: number; product_name: string; color: string; size: string; unit_price: number; quantity: number }>>([]);
   const [manualOrder, setManualOrder] = useState({
     customer_name: "",
     customer_phone: "",
@@ -678,6 +714,20 @@ const AdminDashboard = () => {
     refetchInterval: 30000,
   });
 
+  const { data: staffMembers } = useQuery({
+    queryKey: ["admin-staff"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("staff_members")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && isAdmin,
+    refetchInterval: 30000,
+  });
+
   // Computed stats (100% basés DB) — seules les commandes confirmées comptent pour le CA
   const allOrders = orders || [];
   const allItems = allOrderItems || [];
@@ -696,8 +746,7 @@ const AdminDashboard = () => {
     }, {});
   }, [allItems]);
 
-  const getNetOrderAmount = (order: any) =>
-    Number(order.total_amount || 0) - Number(order.delivery_fee || 0);
+  const getNetOrderAmount = (order: any) => getMerchandiseAmount(order);
 
   const pendingOrders = allOrders.filter((o) => o.status === "nouvelle");
   const totalSales = confirmedOrders.reduce((sum, o) => sum + getNetOrderAmount(o), 0);
@@ -894,12 +943,9 @@ const AdminDashboard = () => {
       toast({ title: "Montant invalide", description: "Le frais de livraison doit etre un nombre >= 0.", variant: "destructive" });
       return;
     }
-    const previousFee = Number(order.delivery_fee || 0);
-    const previousTotal = Number(order.total_amount || 0);
-    const updatedTotal = Math.max(0, previousTotal - previousFee + parsed);
     const { error } = await supabase
       .from("orders")
-      .update({ delivery_fee: parsed, total_amount: updatedTotal })
+      .update({ delivery_fee: parsed })
       .eq("id", order.id);
     if (error) {
       toast({ title: "Erreur", description: error.message, variant: "destructive" });
@@ -955,18 +1001,81 @@ const AdminDashboard = () => {
     toast({ title: "Dépense enregistrée" });
     queryClient.invalidateQueries({ queryKey: ["admin-expenses"] });
   };
-  const handleCreateCourier = async () => {
-    if (!courierForm.full_name) return;
-    const { error } = await (supabase as any).from("couriers").insert({
-      full_name: courierForm.full_name,
-      phone: courierForm.phone || null,
-      notes: courierForm.notes || null,
-      is_active: true,
+  const handleCreateStaffAccount = async () => {
+    if (!staffAccountForm.badge || !staffAccountForm.password || !staffAccountForm.full_name) return;
+    const { data, error } = await (supabase as any).rpc("admin_create_staff_member", {
+      p_badge: staffAccountForm.badge,
+      p_password: staffAccountForm.password,
+      p_full_name: staffAccountForm.full_name,
+      p_role: staffAccountForm.role,
     });
-    if (error) { toast({ title: "Erreur", description: error.message, variant: "destructive" }); return; }
-    setCourierForm({ full_name: "", phone: "", notes: "" });
-    toast({ title: "Livreur créé" });
+    if (error) {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({
+      title: "Compte créé",
+      description: `${staffAccountForm.role.toUpperCase()} #${data} — badge ${staffAccountForm.badge.toUpperCase()}`,
+    });
+    setStaffAccountForm({ badge: "", password: "", full_name: "", role: staffAccountForm.role });
     queryClient.invalidateQueries({ queryKey: ["admin-couriers"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-staff"] });
+  };
+  const handleAdminScan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = adminScanCode.trim();
+    if (!code) return;
+    const { data, error } = await (supabase as any).rpc("lookup_variant_by_barcode", { p_barcode: code });
+    if (error || !data?.[0]) {
+      toast({ title: "Code introuvable", variant: "destructive" });
+      return;
+    }
+    const row = data[0];
+    setAdminScanCart((prev) => {
+      const existing = prev.find((l) => l.variant_id === Number(row.variant_id));
+      if (existing) {
+        return prev.map((l) => l.variant_id === Number(row.variant_id) ? { ...l, quantity: l.quantity + 1 } : l);
+      }
+      return [...prev, {
+        variant_id: Number(row.variant_id),
+        product_id: Number(row.product_id),
+        product_name: row.product_name,
+        color: row.color,
+        size: row.size,
+        unit_price: Number(row.unit_price),
+        quantity: 1,
+      }];
+    });
+    setAdminScanCode("");
+  };
+  const handleAdminScanSale = async () => {
+    if (adminScanCart.length === 0) return;
+    const items = adminScanCart.map((l) => ({
+      product_id: l.product_id,
+      quantity: l.quantity,
+      unit_price: l.unit_price,
+      size: l.size,
+      color: l.color,
+    }));
+    const { data, error } = await (supabase as any).rpc("create_manual_order_admin", {
+      _customer_name: "Vente physique admin",
+      _customer_phone: null,
+      _delivery_address: null,
+      _delivery_fee: 0,
+      _items: items,
+      _order_source: "pos",
+      _notes: "Scan admin dashboard",
+      _status: "traitée",
+    });
+    if (error) {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Vente enregistrée", description: `Commande #${data}` });
+    setAdminScanCart([]);
+    queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-order-items"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-variants"] });
   };
   const handleAssignCourier = async (orderId: number, courierId: string) => {
     const value = courierId === "__none__" ? null : Number(courierId);
@@ -1193,7 +1302,7 @@ const AdminDashboard = () => {
                             if (!o.created_at) return;
                             const d = new Date(o.created_at);
                             const key = d.toISOString().slice(0, 10);
-                            byDay.set(key, (byDay.get(key) || 0) + Number(o.total_amount || 0));
+                            byDay.set(key, (byDay.get(key) || 0) + getMerchandiseAmount(o));
                           });
                           const out: { day: string; value: number }[] = [];
                           for (let i = days - 1; i >= 0; i--) {
@@ -1328,7 +1437,7 @@ const AdminDashboard = () => {
                             <p className="text-xs text-muted-foreground">{o.created_at ? formatDate(o.created_at) : ""}</p>
                           </div>
                           <div className="ml-3 flex items-center gap-2 text-right">
-                            <p className="text-sm font-semibold text-primary">{formatPrice(Number(o.total_amount || 0))}</p>
+                            <p className="text-sm font-semibold text-primary">{formatPrice(getMerchandiseAmount(o))}</p>
                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${ORDER_STATUSES.nouvelle.color}`}>
                               {ORDER_STATUSES.nouvelle.label}
                             </span>
@@ -1468,7 +1577,7 @@ const AdminDashboard = () => {
                         <th className="px-4 py-3 text-left text-sm font-semibold">#</th>
                         <th className="px-4 py-3 text-left text-sm font-semibold">Client</th>
                         <th className="px-4 py-3 text-left text-sm font-semibold">Adresse</th>
-                        <th className="px-4 py-3 text-left text-sm font-semibold">Total</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Articles</th>
                         <th className="px-4 py-3 text-left text-sm font-semibold">Statut</th>
                         <th className="px-4 py-3 text-left text-sm font-semibold">Date</th>
                         <th className="px-4 py-3 text-right text-sm font-semibold">Détails</th>
@@ -1493,7 +1602,14 @@ const AdminDashboard = () => {
                               <td className="px-4 py-4 text-sm text-muted-foreground">
                                 <div className="flex items-center gap-1"><MapPin className="h-3 w-3" />{(order as any).delivery_address || "—"}</div>
                               </td>
-                              <td className="px-4 py-4 font-semibold text-primary">{formatPrice(Number(order.total_amount))}</td>
+                              <td className="px-4 py-4 font-semibold text-primary">
+                                <div>{formatPrice(getMerchandiseAmount(order))}</div>
+                                {Number((order as any).delivery_fee || 0) > 0 && (
+                                  <p className="text-xs font-normal text-muted-foreground">
+                                    + {formatPrice(Number((order as any).delivery_fee))} livr. · {formatPrice(getCustomerPayableTotal(order))} client
+                                  </p>
+                                )}
+                              </td>
                               <td className="px-4 py-4">
                                 <Select value={order.status} onValueChange={(v) => handleOrderStatus(order.id, v)}>
                                   <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
@@ -1571,7 +1687,7 @@ const AdminDashboard = () => {
                                           Enregistrer
                                         </Button>
                                         <span className="text-xs text-muted-foreground">
-                                          Le total commande est recalcule automatiquement.
+                                          Les frais de livraison ne modifient pas le montant articles comptabilisé.
                                         </span>
                                       </div>
                                     </div>
@@ -1942,22 +2058,148 @@ const AdminDashboard = () => {
                 </div>
 
                 <div className="vsm-card p-5">
-                  <h4 className="font-display text-lg font-semibold">Comptes livreurs</h4>
+                  <h4 className="font-display text-lg font-semibold">Comptes POS &amp; livreurs</h4>
+                  <p className="mt-1 text-xs text-muted-foreground">Badge + mot de passe pour accéder à /connexion</p>
                   <div className="mt-3 space-y-2">
-                    <Input placeholder="Nom livreur" value={courierForm.full_name} onChange={(e) => setCourierForm((s) => ({ ...s, full_name: e.target.value }))} />
-                    <Input placeholder="Téléphone" value={courierForm.phone} onChange={(e) => setCourierForm((s) => ({ ...s, phone: e.target.value }))} />
-                    <Input placeholder="Note" value={courierForm.notes} onChange={(e) => setCourierForm((s) => ({ ...s, notes: e.target.value }))} />
-                    <Button className="w-full" onClick={handleCreateCourier}>Créer livreur</Button>
+                    <Input
+                      placeholder="Nom du compte"
+                      value={staffAccountForm.full_name}
+                      onChange={(e) => setStaffAccountForm((s) => ({ ...s, full_name: e.target.value }))}
+                    />
+                    <Input
+                      placeholder="Badge (ex: VSM1024)"
+                      value={staffAccountForm.badge}
+                      onChange={(e) => setStaffAccountForm((s) => ({ ...s, badge: e.target.value.toUpperCase() }))}
+                      className="uppercase"
+                    />
+                    <Input
+                      type="password"
+                      placeholder="Mot de passe (min 6 car.)"
+                      value={staffAccountForm.password}
+                      onChange={(e) => setStaffAccountForm((s) => ({ ...s, password: e.target.value }))}
+                    />
+                    <Select
+                      value={staffAccountForm.role}
+                      onValueChange={(v) => setStaffAccountForm((s) => ({ ...s, role: v }))}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pos">Caisse POS</SelectItem>
+                        <SelectItem value="courier">Livreur</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button className="w-full" onClick={handleCreateStaffAccount}>Créer le compte</Button>
                   </div>
-                  <div className="mt-4 space-y-2">
-                    {(couriers || []).slice(0, 10).map((courier: any) => (
-                      <div key={courier.id} className="rounded-sm border border-border p-2 text-sm">
-                        <p className="font-medium">{courier.full_name}</p>
-                        <p className="text-xs text-muted-foreground">{courier.phone || "Sans téléphone"}</p>
+                  <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
+                    {(staffMembers || []).slice(0, 15).map((member: any) => (
+                      <div key={member.id} className="rounded-sm border border-border p-2 text-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-medium">{member.full_name}</p>
+                          <Badge variant={member.role === "pos" ? "default" : "secondary"}>
+                            {member.role === "pos" ? "POS" : "Livreur"}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Badge {member.badge}</p>
                       </div>
                     ))}
-                    {(couriers || []).length === 0 && <p className="text-sm text-muted-foreground">Aucun livreur.</p>}
+                    {(staffMembers || []).length === 0 && (
+                      <p className="text-sm text-muted-foreground">Aucun compte staff.</p>
+                    )}
                   </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ============ STOCK & CODES ============ */}
+          {activeTab === "inventory" && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              <div className="grid gap-4 xl:grid-cols-3">
+                <div className="vsm-card p-5 xl:col-span-2">
+                  <h3 className="font-display text-xl font-bold">Codes-barres variantes</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Générés automatiquement (VSM + ID). Utilisables au POS et pour vente physique admin.
+                  </p>
+                  <div className="mt-4 max-h-[480px] overflow-auto rounded-sm border border-border">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+                        <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                          <th className="px-3 py-2">Produit</th>
+                          <th className="px-3 py-2">Variante</th>
+                          <th className="px-3 py-2">Stock</th>
+                          <th className="px-3 py-2">Code-barres</th>
+                          <th className="px-3 py-2"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allVariants.map((variant: any) => {
+                          const product = (products || []).find((p) => Number(p.id) === Number(variant.product_id));
+                          const barcode = variant.barcode || `VSM${String(variant.id).padStart(10, "0")}`;
+                          return (
+                            <tr key={variant.id} className="border-b border-border/60">
+                              <td className="px-3 py-2 font-medium">{product?.name || `#${variant.product_id}`}</td>
+                              <td className="px-3 py-2 text-muted-foreground">{variant.color} / {variant.size}</td>
+                              <td className="px-3 py-2">
+                                <span className={Number(variant.stock) <= 3 ? "font-semibold text-red-500" : ""}>
+                                  {variant.stock}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 font-mono text-xs">{barcode}</td>
+                              <td className="px-3 py-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1"
+                                  onClick={() => downloadBarcodeSvg(barcode, `barcode-${barcode}.svg`)}
+                                >
+                                  <Download className="h-3.5 w-3.5" /> SVG
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {allVariants.length === 0 && (
+                      <p className="py-8 text-center text-muted-foreground">Aucune variante.</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="vsm-card space-y-4 p-5">
+                  <h3 className="flex items-center gap-2 font-display text-lg font-bold">
+                    <ScanLine className="h-5 w-5 text-primary" /> Vente physique (scan)
+                  </h3>
+                  <form onSubmit={handleAdminScan} className="flex gap-2">
+                    <Input
+                      value={adminScanCode}
+                      onChange={(e) => setAdminScanCode(e.target.value)}
+                      placeholder="Scanner code-barres"
+                    />
+                    <Button type="submit">Ajouter</Button>
+                  </form>
+                  {adminScanCart.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Scannez un produit pour démarrer une vente.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {adminScanCart.map((line) => (
+                        <div key={line.variant_id} className="flex items-center justify-between rounded-sm border border-border p-2 text-sm">
+                          <div>
+                            <p className="font-medium">{line.product_name}</p>
+                            <p className="text-xs text-muted-foreground">{line.color} / {line.size} · x{line.quantity}</p>
+                          </div>
+                          <span className="font-semibold">{formatPrice(line.unit_price * line.quantity)}</span>
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between border-t border-border pt-2 font-display font-bold">
+                        <span>Total</span>
+                        <span className="text-primary">
+                          {formatPrice(adminScanCart.reduce((s, l) => s + l.unit_price * l.quantity, 0))}
+                        </span>
+                      </div>
+                      <Button className="w-full" onClick={handleAdminScanSale}>Valider la vente</Button>
+                    </div>
+                  )}
                 </div>
               </div>
             </motion.div>

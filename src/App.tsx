@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { CartProvider } from "@/context/CartContext";
 import { AuthProvider } from "@/hooks/useAuth";
+import { StaffAuthProvider } from "@/hooks/useStaffAuth";
 import Index from "./pages/Index";
 import Boutique from "./pages/Boutique";
 import ProductDetail from "./pages/ProductDetail";
@@ -22,6 +23,8 @@ import ClientDashboard from "./pages/ClientDashboard";
 import BecomeAmbassador from "./pages/BecomeAmbassador";
 import NotFound from "./pages/NotFound";
 import AmbassadorLink from "./pages/AmbassadorLink";
+import PosDashboard from "./pages/PosDashboard";
+import CourierDashboard from "./pages/CourierDashboard";
 
 const queryClient = new QueryClient();
 
@@ -29,6 +32,7 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <AuthProvider>
+        <StaffAuthProvider>
         <CartProvider>
           <Toaster />
           <Sonner />
@@ -47,13 +51,15 @@ const App = () => (
               <Route path="/admin/ambassadeur/:userId" element={<AdminAmbassadorDetail />} />
               <Route path="/admin/candidature/:applicationId" element={<AdminAmbassadorApplication />} />
               <Route path="/ambassadeur" element={<AmbassadorDashboard />} />
-              <Route path="/a/:slug" element={<AmbassadorLink />} />
+              <Route path="/pos" element={<PosDashboard />} />
+              <Route path="/livreur" element={<CourierDashboard />} />
               <Route path="/mon-compte" element={<ClientDashboard />} />
               <Route path="/devenir-ambassadeur" element={<BecomeAmbassador />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>
         </CartProvider>
+        </StaffAuthProvider>
       </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>

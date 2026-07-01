@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { useCart } from "@/context/CartContext";
 import { useProduct } from "@/hooks/useProducts";
 import { toast } from "@/hooks/use-toast";
+import ProductReviews from "@/components/product/ProductReviews";
 import { getProductPath } from "@/lib/slug";
 
 const ProductDetail = () => {
@@ -351,6 +352,10 @@ const ProductDetail = () => {
             </motion.div>
           </div>
         </div>
+      </section>
+
+      <section className="vsm-container pb-20">
+        <ProductReviews productId={Number(product.id)} />
       </section>
 
       <Footer />

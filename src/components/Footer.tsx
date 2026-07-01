@@ -15,7 +15,7 @@ const footerLinks = {
     { label: "Contact", to: "/contact" },
   ],
   legal: [
-    { label: "Devenir Ambassadeur", to: "/devenir-ambassadeur" },
+    { label: "Devenir Ambassadeur", href: "https://ambassadeur.vsmcollection.com/ambassadeur", external: true },
   ],
 };
 
@@ -78,11 +78,23 @@ const Footer = forwardRef<HTMLElement>((_, ref) => {
           <div>
             <p className="mb-3 font-display text-xs uppercase tracking-[0.24em] text-muted-foreground">Support</p>
             <div className="flex flex-wrap gap-x-5 gap-y-2">
-              {footerLinks.legal.map((item) => (
-                <Link key={item.label} to={item.to} className="text-sm text-muted-foreground hover:text-primary">
-                  {item.label}
-                </Link>
-              ))}
+              {footerLinks.legal.map((item) =>
+                (item as { external?: boolean }).external ? (
+                  <a
+                    key={item.label}
+                    href={(item as { href: string }).href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-muted-foreground hover:text-primary"
+                  >
+                    {item.label}
+                  </a>
+                ) : (
+                  <Link key={item.label} to={(item as { to: string }).to} className="text-sm text-muted-foreground hover:text-primary">
+                    {item.label}
+                  </Link>
+                )
+              )}
             </div>
           </div>
         </div>

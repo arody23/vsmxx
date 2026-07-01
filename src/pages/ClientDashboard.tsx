@@ -15,9 +15,12 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 
+import { getMerchandiseAmount, getCustomerPayableTotal } from "@/lib/orderAmounts";
+
 interface Order {
   id: number;
   total_amount: number;
+  delivery_fee?: number | null;
   status: string;
   created_at: string | null;
 }
@@ -53,8 +56,8 @@ const ClientDashboard = () => {
     try {
       const { data, error } = await supabase
         .from("orders")
-        .select("*")
-        .eq("user_id", user.id)
+        .select("id, total_amount, delivery_fee, status, created_at")
+        .eq("customer_id", user.id)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -171,8 +174,13 @@ const ClientDashboard = () => {
                             Commande du {formatDate(order.created_at)}
                           </p>
                           <p className="mt-1 font-display text-xl font-bold">
-                            {formatPrice(order.total_amount)}
+                            {formatPrice(getCustomerPayableTotal(order))}
                           </p>
+                          {Number(order.delivery_fee || 0) > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              Articles {formatPrice(getMerchandiseAmount(order))} + livraison {formatPrice(Number(order.delivery_fee))}
+                            </p>
+                          )}
                         </div>
                         <div className={`flex items-center gap-2 ${status.color}`}>
                           <StatusIcon className="h-5 w-5" />

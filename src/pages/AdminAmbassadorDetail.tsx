@@ -1,15 +1,18 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ExternalLink, Loader2, User } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Tables } from "@/integrations/supabase/types";
+import { getMerchandiseAmount } from "@/lib/orderAmounts";
+import { AmbassadorTier, getTierCommissionRate } from "@/lib/ambassadorTiers";
+import { toast } from "@/hooks/use-toast";
 
 const CONFIRMED_STATUSES = ["traitée", "expédiée"];
-const COMMISSION_RATE = 0.1;
 
 const formatPrice = (price: number) => price.toLocaleString("fr-CD") + " FC";
 
@@ -35,9 +38,25 @@ const statusBadge = (status: string) => {
 const AdminAmbassadorDetail = () => {
   const { userId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user, isAdmin, loading: authLoading, rolesLoading } = useAuth();
+  const [tierDraft, setTierDraft] = useState<string>("bronze");
+  const [savingTier, setSavingTier] = useState(false);
 
   const ambassadorUserId = userId ?? "";
+
+  const { data: tiers } = useQuery({
+    queryKey: ["ambassador-tiers"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("ambassador_tiers")
+        .select("*")
+        .order("sort_order", { ascending: true });
+      if (error) throw error;
+      return (data || []) as AmbassadorTier[];
+    },
+    enabled: !!user && isAdmin,
+  });
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["admin-ambassador-detail", ambassadorUserId],
@@ -53,7 +72,7 @@ const AdminAmbassadorDetail = () => {
           .order("created_at", { ascending: false }),
         supabase
           .from("orders")
-          .select("id, total_amount, status, ambassador_id, promo_code_id, source_link_id, created_at")
+          .select("id, total_amount, delivery_fee, status, ambassador_id, promo_code_id, source_link_id, created_at")
           .eq("ambassador_id", ambassadorUserId)
           .order("created_at", { ascending: false }),
         supabase.from("promo_codes").select("*").eq("ambassador_id", ambassadorUserId).order("created_at", { ascending: false }),
@@ -83,7 +102,7 @@ const AdminAmbassadorDetail = () => {
         links,
         orders: (ordersRes.data || []) as Pick<
           Tables<"orders">,
-          "id" | "total_amount" | "status" | "ambassador_id" | "promo_code_id" | "source_link_id" | "created_at"
+          "id" | "total_amount" | "delivery_fee" | "status" | "ambassador_id" | "promo_code_id" | "source_link_id" | "created_at"
         >[],
         promos: (promosRes.data || []) as Tables<"promo_codes">[],
         clicks,
@@ -111,10 +130,40 @@ const AdminAmbassadorDetail = () => {
   );
 
   const totalOrders = data?.orders.length ?? 0;
-  const revenue = confirmedOrders.reduce((s, o) => s + Number(o.total_amount || 0), 0);
+  const currentTier = useMemo(
+    () => tiers?.find((t) => t.id === (data?.profile as { ambassador_tier?: string } | null)?.ambassador_tier) || tiers?.[0] || null,
+    [tiers, data?.profile]
+  );
+  const commissionRate = getTierCommissionRate(currentTier);
+  const revenue = confirmedOrders.reduce((s, o) => s + getMerchandiseAmount(o), 0);
   const ordersCountConfirmed = confirmedOrders.length;
-  const estimatedCommission = Math.floor(revenue * COMMISSION_RATE);
+  const estimatedCommission = Math.floor(revenue * commissionRate);
   const totalClicks = data?.clicks.length ?? 0;
+
+  const handleSaveTier = async () => {
+    if (!ambassadorUserId || !tierDraft) return;
+    setSavingTier(true);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ ambassador_tier: tierDraft } as any)
+        .eq("id", ambassadorUserId);
+      if (error) throw error;
+      toast({ title: "Niveau mis à jour", description: "Le code promo suivra ce taux automatiquement." });
+      queryClient.invalidateQueries({ queryKey: ["admin-ambassador-detail", ambassadorUserId] });
+      queryClient.invalidateQueries({ queryKey: ["admin-promos"] });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erreur";
+      toast({ title: "Erreur", description: msg, variant: "destructive" });
+    } finally {
+      setSavingTier(false);
+    }
+  };
+
+  useEffect(() => {
+    const tierId = (data?.profile as { ambassador_tier?: string } | null)?.ambassador_tier || "bronze";
+    setTierDraft(tierId);
+  }, [data?.profile]);
 
   if (authLoading || rolesLoading) {
     return (
@@ -216,6 +265,22 @@ const AdminAmbassadorDetail = () => {
                     )}
                   </div>
                 </div>
+                <div className="min-w-[220px] space-y-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Niveau ambassadeur</p>
+                  <Select value={tierDraft} onValueChange={setTierDraft}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {(tiers || []).map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.label} — {t.client_discount_percent}% client / {t.commission_percent}% commission
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" disabled={savingTier} onClick={handleSaveTier}>
+                    {savingTier ? "Enregistrement…" : "Enregistrer le niveau"}
+                  </Button>
+                </div>
               </div>
             </section>
 
@@ -236,7 +301,7 @@ const AdminAmbassadorDetail = () => {
               </div>
               <div className="vsm-card p-5">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Commission estimée ({Math.round(COMMISSION_RATE * 100)}%)
+                  Commission estimée ({Math.round(commissionRate * 100)}%)
                 </p>
                 <p className="mt-2 font-display text-2xl font-bold">{formatPrice(estimatedCommission)}</p>
                 <p className="mt-1 text-xs text-muted-foreground">{totalClicks} clics sur liens</p>
@@ -286,7 +351,7 @@ const AdminAmbassadorDetail = () => {
                                 )}
                               </td>
                               <td className="px-4 py-3 text-right font-semibold text-primary">
-                                {formatPrice(Number(o.total_amount || 0))}
+                                {formatPrice(getMerchandiseAmount(o))}
                               </td>
                             </tr>
                           );

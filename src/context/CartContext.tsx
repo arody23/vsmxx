@@ -101,28 +101,55 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const applyPromoCode = async (code: string): Promise<boolean> => {
     try {
-      const { data, error } = await supabase
-        .from("promo_codes")
-        .select("*")
-        .eq("code", code.toUpperCase())
-        .eq("active", true)
-        .single();
-
-      if (error || !data) {
-        toast({ title: "Code invalide", description: "Ce code promo n'existe pas.", variant: "destructive" });
+      const subtotal = items.reduce((total, item) => total + item.price * item.quantity, 0);
+      if (subtotal <= 0) {
+        toast({ title: "Panier vide", description: "Ajoutez des articles avant d'appliquer un code.", variant: "destructive" });
         return false;
       }
 
-      const subtotal = items.reduce((total, item) => total + item.price * item.quantity, 0);
-      const discount = data.discount_type === "percent"
-        ? Math.floor((subtotal * Number(data.discount_value)) / 100)
-        : Number(data.discount_value);
+      const { data, error } = await (supabase as any).rpc("validate_promo_code", {
+        p_code: code.trim(),
+        p_subtotal: subtotal,
+      });
 
-      setPromoCode(data.code);
+      if (error) {
+        toast({ title: "Erreur", description: error.message, variant: "destructive" });
+        return false;
+      }
+
+      const result = data as {
+        valid?: boolean;
+        message?: string;
+        code?: string;
+        discount_amount?: number;
+        discount_percent?: number;
+        discount_type?: string;
+        tier_label?: string;
+      };
+
+      if (!result?.valid) {
+        toast({
+          title: "Code invalide",
+          description: result?.message || "Ce code promo n'existe pas ou n'est plus actif.",
+          variant: "destructive",
+        });
+        return false;
+      }
+
+      const discount = Number(result.discount_amount || 0);
+      setPromoCode(result.code || code.toUpperCase());
       setPromoDiscount(discount);
+
+      const discountLabel =
+        result.discount_type === "percent" && result.discount_percent != null
+          ? `${result.discount_percent}%`
+          : `${discount.toLocaleString("fr-CD")} FC`;
+
       toast({
         title: "Code promo appliqué!",
-        description: `Réduction de ${data.discount_type === "percent" ? data.discount_value + "%" : Number(data.discount_value).toLocaleString() + " FC"}`,
+        description: result.tier_label
+          ? `Réduction ${result.tier_label} : -${discountLabel}`
+          : `Réduction de ${discountLabel}`,
       });
       return true;
     } catch {

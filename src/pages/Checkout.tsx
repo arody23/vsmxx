@@ -165,7 +165,7 @@ const Checkout = () => {
           _notes: formData.instructions || null,
           _promo_code_id: promoCodeId,
           _promo_discount: promoDiscount,
-          _total_amount: totalWithDelivery,
+          _total_amount: subtotalAfterDiscount,
           _source_link_id: sourceLinkId,
           _items: orderItemsPayload,
         }

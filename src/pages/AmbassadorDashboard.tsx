@@ -40,6 +40,8 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { getMerchandiseAmount } from "@/lib/orderAmounts";
+import { useAmbassadorTier } from "@/hooks/useAmbassadorTier";
 import type { Tables } from "@/integrations/supabase/types";
 
 interface TrackingLink {
@@ -77,8 +79,6 @@ interface OrderRow {
 type WithdrawalRow = Tables<"ambassador_withdrawal_requests">;
 
 const CONFIRMED_STATUSES = ["traitée", "expédiée"];
-const COMMISSION_RATE = 0.1;
-const COMMISSION_PERCENT = Math.round(COMMISSION_RATE * 100);
 const MIN_ORDERS_FOR_WITHDRAWAL = 10;
 
 const OPERATOR_LABELS: Record<string, string> = {
@@ -89,6 +89,8 @@ const OPERATOR_LABELS: Record<string, string> = {
 
 const AmbassadorDashboard = () => {
   const { user, signOut, isAmbassador, loading } = useAuth();
+  const { tier, commissionRate } = useAmbassadorTier(user?.id);
+  const commissionPercent = Math.round(commissionRate * 100);
   const navigate = useNavigate();
   const [dashTab, setDashTab] = useState("overview");
   const [trackingLinks, setTrackingLinks] = useState<TrackingLink[]>([]);
@@ -264,14 +266,13 @@ const AmbassadorDashboard = () => {
 
   const totalClicks = clicks.length;
   const totalConversions = confirmedOrders.length;
-  const getNetOrderAmount = (o: OrderRow) =>
-    Number(o.total_amount || 0) - Number(o.delivery_fee || 0);
+  const getNetOrderAmount = (o: OrderRow) => getMerchandiseAmount(o);
   const totalRevenue = confirmedOrders.reduce((s, o) => s + getNetOrderAmount(o), 0);
   const revenueFromPromoSales = salesWithMyPromo.reduce((s, o) => s + getNetOrderAmount(o), 0);
   const conversionRate =
     totalClicks > 0 ? ((totalConversions / totalClicks) * 100).toFixed(1) : "0";
   const totalPromoUsage = promoCodes.reduce((s, c) => s + c.usage_count, 0);
-  const estimatedCommission = Math.floor(totalRevenue * COMMISSION_RATE);
+  const estimatedCommission = Math.floor(totalRevenue * commissionRate);
   const activeLinks = trackingLinks.filter((l) => l.active).length;
   const activePromoCodes = promoCodes.length;
 
@@ -497,9 +498,10 @@ const AmbassadorDashboard = () => {
                     <Percent className="h-6 w-6 text-violet-500" />
                     <Badge variant="secondary">Taux</Badge>
                   </div>
-                  <p className="mt-4 font-display text-3xl font-bold">{COMMISSION_PERCENT}%</p>
+                  <p className="mt-4 font-display text-3xl font-bold">{commissionPercent}%</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Commission sur le CA confirmé
+                    Commission sur le CA confirmé (hors livraison)
+                    {tier?.label ? ` — niveau ${tier.label}` : ""}
                   </p>
                   <p className="mt-2 text-xs text-muted-foreground">
                     Trafic → vente: {conversionRate}% ({totalClicks} clics)
@@ -513,7 +515,7 @@ const AmbassadorDashboard = () => {
                   <p className="mt-4 font-display text-3xl font-bold text-primary">
                     {formatPrice(estimatedCommission)}
                   </p>
-                  <p className="mt-1 text-sm text-muted-foreground">Estimation ({COMMISSION_PERCENT}%)</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Estimation ({commissionPercent}%)</p>
                   <p className="mt-2 text-xs text-muted-foreground">
                     CA confirmé: {formatPrice(totalRevenue)}
                   </p>
@@ -675,7 +677,7 @@ const AmbassadorDashboard = () => {
                           </div>
                           <div className="text-right">
                             <p className="text-sm font-semibold text-primary">
-                              {formatPrice(Number(o.total_amount || 0))}
+                              {formatPrice(getMerchandiseAmount(o))}
                             </p>
                             <div className="mt-1 flex justify-end">{statusBadge(o.status)}</div>
                           </div>
@@ -782,7 +784,7 @@ const AmbassadorDashboard = () => {
                           <p className="font-display text-xl font-bold text-primary">{code.code}</p>
                           <p className="text-sm text-muted-foreground">
                             {code.discount_type === "percent"
-                              ? `-${code.discount_value}%`
+                              ? `-${tier?.client_discount_percent ?? code.discount_value}%`
                               : `-${formatPrice(code.discount_value)}`}
                             {" • "}
                             {code.usage_count} utilisation{code.usage_count !== 1 ? "s" : ""}{" "}
@@ -806,7 +808,7 @@ const AmbassadorDashboard = () => {
                     {salesWithMyPromo.length !== 1 ? "s" : ""} avec votre code — commission estimée
                     sur ces ventes :{" "}
                     <span className="font-semibold text-foreground">
-                      {formatPrice(Math.floor(revenueFromPromoSales * COMMISSION_RATE))}
+                      {formatPrice(Math.floor(revenueFromPromoSales * commissionRate))}
                     </span>
                     .
                   </div>
@@ -873,7 +875,7 @@ const AmbassadorDashboard = () => {
                               </td>
                               <td className="px-4 py-4">{statusBadge(o.status)}</td>
                               <td className="px-4 py-4 text-right font-semibold text-primary">
-                                {formatPrice(Number(o.total_amount || 0))}
+                                {formatPrice(getMerchandiseAmount(o))}
                               </td>
                             </tr>
                           );
