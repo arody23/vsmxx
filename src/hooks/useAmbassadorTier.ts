@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
   AmbassadorTier,
-  DEFAULT_AMBASSADOR_TIER_ID,
   getTierCommissionRate,
+  getTierFromLabel,
 } from "@/lib/ambassadorTiers";
 
 export const useAmbassadorTier = (userId?: string | null) => {
@@ -19,24 +19,15 @@ export const useAmbassadorTier = (userId?: string | null) => {
 
     setLoading(true);
     try {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("ambassador_tier")
-        .eq("id", userId)
-        .maybeSingle();
+      const { data: tierLabel, error } = await (supabase as any).rpc(
+        "get_ambassador_program_tier",
+        { p_user_id: userId }
+      );
 
-      const tierId = (profile as { ambassador_tier?: string } | null)?.ambassador_tier
-        || DEFAULT_AMBASSADOR_TIER_ID;
-
-      const { data: tierRow } = await (supabase as any)
-        .from("ambassador_tiers")
-        .select("*")
-        .eq("id", tierId)
-        .maybeSingle();
-
-      setTier((tierRow as AmbassadorTier) || null);
+      if (error) throw error;
+      setTier(getTierFromLabel(tierLabel as string));
     } catch {
-      setTier(null);
+      setTier(getTierFromLabel("Starter"));
     } finally {
       setLoading(false);
     }

@@ -1,16 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ExternalLink, Loader2, User } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Tables } from "@/integrations/supabase/types";
 import { getMerchandiseAmount } from "@/lib/orderAmounts";
-import { AmbassadorTier, getTierCommissionRate } from "@/lib/ambassadorTiers";
-import { toast } from "@/hooks/use-toast";
+import { AMBASSADOR_PROGRAM_TIERS, getTierCommissionRate, getTierFromLabel } from "@/lib/ambassadorTiers";
 
 const CONFIRMED_STATUSES = ["traitée", "expédiée"];
 
@@ -38,31 +36,15 @@ const statusBadge = (status: string) => {
 const AdminAmbassadorDetail = () => {
   const { userId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const { user, isAdmin, loading: authLoading, rolesLoading } = useAuth();
-  const [tierDraft, setTierDraft] = useState<string>("bronze");
-  const [savingTier, setSavingTier] = useState(false);
 
   const ambassadorUserId = userId ?? "";
-
-  const { data: tiers } = useQuery({
-    queryKey: ["ambassador-tiers"],
-    queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("ambassador_tiers")
-        .select("*")
-        .order("sort_order", { ascending: true });
-      if (error) throw error;
-      return (data || []) as AmbassadorTier[];
-    },
-    enabled: !!user && isAdmin,
-  });
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["admin-ambassador-detail", ambassadorUserId],
     enabled: !!user && isAdmin && !!ambassadorUserId,
     queryFn: async () => {
-      const [appRes, profileRes, linksRes, ordersRes, promosRes] = await Promise.all([
+      const [appRes, profileRes, linksRes, ordersRes, promosRes, tierRes] = await Promise.all([
         supabase.from("ambassador_applications").select("*").eq("user_id", ambassadorUserId).maybeSingle(),
         supabase.from("profiles").select("*").eq("id", ambassadorUserId).maybeSingle(),
         supabase
@@ -76,6 +58,7 @@ const AdminAmbassadorDetail = () => {
           .eq("ambassador_id", ambassadorUserId)
           .order("created_at", { ascending: false }),
         supabase.from("promo_codes").select("*").eq("ambassador_id", ambassadorUserId).order("created_at", { ascending: false }),
+        (supabase as any).rpc("get_ambassador_program_tier", { p_user_id: ambassadorUserId }),
       ]);
 
       if (appRes.error) throw appRes.error;
@@ -106,6 +89,7 @@ const AdminAmbassadorDetail = () => {
         >[],
         promos: (promosRes.data || []) as Tables<"promo_codes">[],
         clicks,
+        programTier: (tierRes.data as string) || "Starter",
       };
     },
   });
@@ -131,39 +115,14 @@ const AdminAmbassadorDetail = () => {
 
   const totalOrders = data?.orders.length ?? 0;
   const currentTier = useMemo(
-    () => tiers?.find((t) => t.id === (data?.profile as { ambassador_tier?: string } | null)?.ambassador_tier) || tiers?.[0] || null,
-    [tiers, data?.profile]
+    () => getTierFromLabel(data?.programTier || data?.profile?.level),
+    [data?.programTier, data?.profile?.level]
   );
   const commissionRate = getTierCommissionRate(currentTier);
   const revenue = confirmedOrders.reduce((s, o) => s + getMerchandiseAmount(o), 0);
   const ordersCountConfirmed = confirmedOrders.length;
   const estimatedCommission = Math.floor(revenue * commissionRate);
   const totalClicks = data?.clicks.length ?? 0;
-
-  const handleSaveTier = async () => {
-    if (!ambassadorUserId || !tierDraft) return;
-    setSavingTier(true);
-    try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ ambassador_tier: tierDraft } as any)
-        .eq("id", ambassadorUserId);
-      if (error) throw error;
-      toast({ title: "Niveau mis à jour", description: "Le code promo suivra ce taux automatiquement." });
-      queryClient.invalidateQueries({ queryKey: ["admin-ambassador-detail", ambassadorUserId] });
-      queryClient.invalidateQueries({ queryKey: ["admin-promos"] });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erreur";
-      toast({ title: "Erreur", description: msg, variant: "destructive" });
-    } finally {
-      setSavingTier(false);
-    }
-  };
-
-  useEffect(() => {
-    const tierId = (data?.profile as { ambassador_tier?: string } | null)?.ambassador_tier || "bronze";
-    setTierDraft(tierId);
-  }, [data?.profile]);
 
   if (authLoading || rolesLoading) {
     return (
@@ -266,20 +225,22 @@ const AdminAmbassadorDetail = () => {
                   </div>
                 </div>
                 <div className="min-w-[220px] space-y-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Niveau ambassadeur</p>
-                  <Select value={tierDraft} onValueChange={setTierDraft}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {(tiers || []).map((t) => (
-                        <SelectItem key={t.id} value={t.id}>
-                          {t.label} — {t.client_discount_percent}% client / {t.commission_percent}% commission
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button size="sm" disabled={savingTier} onClick={handleSaveTier}>
-                    {savingTier ? "Enregistrement…" : "Enregistrer le niveau"}
-                  </Button>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Niveau programme</p>
+                  <p className="font-display text-xl font-bold">{currentTier.label}</p>
+                  <p className="text-sm text-muted-foreground">
+                    Réduction client : {currentTier.discountPercent}% — calculé selon les ventes confirmées
+                  </p>
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {AMBASSADOR_PROGRAM_TIERS.map((t) => (
+                      <Badge
+                        key={t.key}
+                        variant={t.key === currentTier.key ? "default" : "outline"}
+                        className="text-xs"
+                      >
+                        {t.label} {t.discountPercent}%
+                      </Badge>
+                    ))}
+                  </div>
                 </div>
               </div>
             </section>

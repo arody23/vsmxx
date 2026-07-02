@@ -102,7 +102,7 @@ CREATE OR REPLACE FUNCTION public.admin_create_staff_member(
 RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'public'
+SET search_path TO 'public', 'extensions'
 AS $$
 DECLARE
   v_id bigint;
@@ -162,7 +162,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'public'
+SET search_path TO 'public', 'extensions'
 AS $$
 BEGIN
   RETURN QUERY
@@ -192,7 +192,7 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path TO 'public'
+SET search_path TO 'public', 'extensions'
 AS $$
   SELECT
     pv.id AS variant_id,
@@ -218,7 +218,7 @@ RETURNS jsonb
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path TO 'public'
+SET search_path TO 'public', 'extensions'
 AS $$
 DECLARE
   v_today date := CURRENT_DATE;
@@ -251,7 +251,7 @@ RETURNS SETOF public.orders
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path TO 'public'
+SET search_path TO 'public', 'extensions'
 AS $$
   SELECT o.*
   FROM public.orders o
@@ -271,7 +271,7 @@ CREATE OR REPLACE FUNCTION public.create_pos_order(
 RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'public'
+SET search_path TO 'public', 'extensions'
 AS $$
 DECLARE
   v_order_id bigint;
@@ -356,7 +356,7 @@ CREATE OR REPLACE FUNCTION public.courier_mark_order_shipped(
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'public'
+SET search_path TO 'public', 'extensions'
 AS $$
 DECLARE
   v_courier_id bigint;

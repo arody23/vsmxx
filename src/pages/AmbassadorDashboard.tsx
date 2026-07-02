@@ -784,7 +784,7 @@ const AmbassadorDashboard = () => {
                           <p className="font-display text-xl font-bold text-primary">{code.code}</p>
                           <p className="text-sm text-muted-foreground">
                             {code.discount_type === "percent"
-                              ? `-${tier?.client_discount_percent ?? code.discount_value}%`
+                              ? `-${tier?.discountPercent ?? code.discount_value}%`
                               : `-${formatPrice(code.discount_value)}`}
                             {" • "}
                             {code.usage_count} utilisation{code.usage_count !== 1 ? "s" : ""}{" "}

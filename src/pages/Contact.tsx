@@ -99,10 +99,10 @@ const Contact = () => {
                   <div>
                     <h3 className="font-display font-semibold">Téléphone</h3>
                     <a
-                      href="tel:+243000000000"
+                      href="tel:+243976028479"
                       className="text-sm text-muted-foreground hover:text-primary"
                     >
-                      +243 000 000 000
+                      +243 97 60 28 479
                     </a>
                   </div>
                 </div>

@@ -5,7 +5,7 @@ import {
   Package, Users, DollarSign, ShoppingCart, Plus, Edit, Trash2,
   LogOut, Menu, X, Tag, Truck, UserCheck, BarChart3, Save, Loader2, Check, XCircle, Image, Settings,
   AlertTriangle, Eye, TrendingUp, Calendar, Phone, MapPin, ChevronDown, ChevronUp,
-  Wallet, Receipt, HandCoins, Bike, ScanLine, Download,
+  Wallet, Receipt, HandCoins, Bike, ScanLine, Download, Star,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,7 @@ import MultiImageUploader from "@/components/admin/MultiImageUploader";
 import { slugify } from "@/lib/slug";
 import { downloadBarcodeSvg } from "@/lib/barcode";
 import { getMerchandiseAmount, getCustomerPayableTotal } from "@/lib/orderAmounts";
+import { getTierDiscountPercent, getTierFromLabel } from "@/lib/ambassadorTiers";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -49,6 +50,7 @@ const menuItems = [
   { icon: Receipt, label: "Finance Pro", id: "finance" },
   { icon: Truck, label: "Livraison", id: "delivery" },
   { icon: Tag, label: "Promos", id: "promos" },
+  { icon: Star, label: "Avis produits", id: "reviews" },
   { icon: UserCheck, label: "Ambassadeurs", id: "ambassadors" },
   { icon: Wallet, label: "Retraits amb.", id: "withdrawals" },
   { icon: Users, label: "Clients", id: "clients" },
@@ -413,24 +415,15 @@ const PromoForm = ({
   useEffect(() => {
     const loadTierDiscount = async () => {
       if (form.is_global || !form.ambassador_id) return;
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("ambassador_tier")
-        .eq("id", form.ambassador_id)
-        .maybeSingle();
-      const tierId = (profile as { ambassador_tier?: string } | null)?.ambassador_tier || "bronze";
-      const { data: tierRow } = await (supabase as any)
-        .from("ambassador_tiers")
-        .select("client_discount_percent")
-        .eq("id", tierId)
-        .maybeSingle();
-      if (tierRow?.client_discount_percent != null) {
-        setForm((prev) => ({
-          ...prev,
-          discount_value: String(tierRow.client_discount_percent),
-          discount_type: "percent",
-        }));
-      }
+      const { data: tierLabel } = await (supabase as any).rpc("get_ambassador_program_tier", {
+        p_user_id: form.ambassador_id,
+      });
+      const percent = getTierDiscountPercent(getTierFromLabel(tierLabel as string));
+      setForm((prev) => ({
+        ...prev,
+        discount_value: String(percent),
+        discount_type: "percent",
+      }));
     };
     loadTierDiscount();
   }, [form.ambassador_id, form.is_global]);
@@ -560,6 +553,7 @@ const AdminDashboard = () => {
     full_name: "",
     role: "pos",
   });
+  const [creatingStaff, setCreatingStaff] = useState(false);
   const [adminScanCode, setAdminScanCode] = useState("");
   const [adminScanCart, setAdminScanCart] = useState<Array<{ variant_id: number; product_id: number; product_name: string; color: string; size: string; unit_price: number; quantity: number }>>([]);
   const [manualOrder, setManualOrder] = useState({
@@ -625,6 +619,29 @@ const AdminDashboard = () => {
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data || [];
+    },
+    enabled: !!user && isAdmin,
+    refetchInterval: 20000,
+  });
+
+  const { data: productReviews } = useQuery({
+    queryKey: ["admin-product-reviews"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("product_reviews")
+        .select("id, product_id, client_name, rating, comment, image_url, created_at, products(name)")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data || []) as Array<{
+        id: number;
+        product_id: number;
+        client_name: string;
+        rating: number;
+        comment: string | null;
+        image_url: string | null;
+        created_at: string | null;
+        products: { name: string } | null;
+      }>;
     },
     enabled: !!user && isAdmin,
     refetchInterval: 20000,
@@ -717,10 +734,7 @@ const AdminDashboard = () => {
   const { data: staffMembers } = useQuery({
     queryKey: ["admin-staff"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("staff_members")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const { data, error } = await (supabase as any).rpc("admin_list_staff_members");
       if (error) throw error;
       return data || [];
     },
@@ -965,6 +979,16 @@ const AdminDashboard = () => {
     if (error) { toast({ title: "Erreur", description: error.message, variant: "destructive" }); return; }
     queryClient.invalidateQueries({ queryKey: ["admin-promos"] });
   };
+  const handleDeleteReview = async (id: number) => {
+    if (!confirm("Supprimer cet avis public ?")) return;
+    const { error } = await (supabase as any).from("product_reviews").delete().eq("id", id);
+    if (error) {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Avis supprimé" });
+    queryClient.invalidateQueries({ queryKey: ["admin-product-reviews"] });
+  };
   const handleWithdrawalStatus = async (id: number, status: string) => {
     const { error } = await supabase
       .from("ambassador_withdrawal_requests")
@@ -1002,24 +1026,40 @@ const AdminDashboard = () => {
     queryClient.invalidateQueries({ queryKey: ["admin-expenses"] });
   };
   const handleCreateStaffAccount = async () => {
-    if (!staffAccountForm.badge || !staffAccountForm.password || !staffAccountForm.full_name) return;
-    const { data, error } = await (supabase as any).rpc("admin_create_staff_member", {
-      p_badge: staffAccountForm.badge,
-      p_password: staffAccountForm.password,
-      p_full_name: staffAccountForm.full_name,
-      p_role: staffAccountForm.role,
-    });
-    if (error) {
-      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+    if (!staffAccountForm.badge || !staffAccountForm.password || !staffAccountForm.full_name) {
+      toast({ title: "Champs requis", description: "Nom, badge et mot de passe obligatoires.", variant: "destructive" });
       return;
     }
-    toast({
-      title: "Compte créé",
-      description: `${staffAccountForm.role.toUpperCase()} #${data} — badge ${staffAccountForm.badge.toUpperCase()}`,
-    });
-    setStaffAccountForm({ badge: "", password: "", full_name: "", role: staffAccountForm.role });
-    queryClient.invalidateQueries({ queryKey: ["admin-couriers"] });
-    queryClient.invalidateQueries({ queryKey: ["admin-staff"] });
+    if (staffAccountForm.badge.trim().length < 3) {
+      toast({ title: "Badge trop court", description: "Minimum 3 caractères.", variant: "destructive" });
+      return;
+    }
+    if (staffAccountForm.password.length < 6) {
+      toast({ title: "Mot de passe faible", description: "Minimum 6 caractères.", variant: "destructive" });
+      return;
+    }
+    setCreatingStaff(true);
+    try {
+      const { data, error } = await (supabase as any).rpc("admin_create_staff_member", {
+        p_badge: staffAccountForm.badge.trim(),
+        p_password: staffAccountForm.password,
+        p_full_name: staffAccountForm.full_name.trim(),
+        p_role: staffAccountForm.role,
+      });
+      if (error) throw error;
+      toast({
+        title: "Compte créé",
+        description: `${staffAccountForm.role.toUpperCase()} #${data} — badge ${staffAccountForm.badge.toUpperCase()}`,
+      });
+      setStaffAccountForm({ badge: "", password: "", full_name: "", role: staffAccountForm.role });
+      queryClient.invalidateQueries({ queryKey: ["admin-couriers"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-staff"] });
+    } catch (err: unknown) {
+      const msg = err && typeof err === "object" && "message" in err ? String((err as { message: string }).message) : "Erreur création compte";
+      toast({ title: "Erreur", description: msg, variant: "destructive" });
+    } finally {
+      setCreatingStaff(false);
+    }
   };
   const handleAdminScan = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1817,6 +1857,79 @@ const AdminDashboard = () => {
             </motion.div>
           )}
 
+          {/* ============ REVIEWS ============ */}
+          {activeTab === "reviews" && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              <div>
+                <h3 className="font-display text-xl font-bold">Avis clients publics</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Avis laissés sur les fiches produit — supprimez ceux à modérer.
+                </p>
+              </div>
+              <div className="vsm-card overflow-hidden">
+                <table className="w-full">
+                  <thead className="border-b border-border bg-secondary">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Produit</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Client</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Note</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Commentaire</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Date</th>
+                      <th className="px-4 py-3 text-right text-sm font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(productReviews || []).map((review) => (
+                      <tr key={review.id} className="border-b border-border last:border-0 align-top">
+                        <td className="px-4 py-4 font-medium">{review.products?.name || `#${review.product_id}`}</td>
+                        <td className="px-4 py-4">{review.client_name}</td>
+                        <td className="px-4 py-4">
+                          <div className="flex items-center gap-0.5">
+                            {Array.from({ length: 5 }).map((_, i) => (
+                              <Star
+                                key={i}
+                                className={`h-3.5 w-3.5 ${i < review.rating ? "fill-primary text-primary" : "text-muted-foreground"}`}
+                              />
+                            ))}
+                          </div>
+                        </td>
+                        <td className="max-w-xs px-4 py-4 text-sm text-muted-foreground">
+                          <p className="line-clamp-3">{review.comment || "—"}</p>
+                          {review.image_url && (
+                            <a
+                              href={review.image_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 inline-block text-xs text-primary hover:underline"
+                            >
+                              Voir la photo
+                            </a>
+                          )}
+                        </td>
+                        <td className="px-4 py-4 text-sm text-muted-foreground whitespace-nowrap">
+                          {review.created_at ? formatDate(review.created_at) : "—"}
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                          <button
+                            type="button"
+                            className="rounded-sm p-2 hover:bg-destructive/20"
+                            onClick={() => handleDeleteReview(review.id)}
+                            aria-label="Supprimer l'avis"
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {(productReviews || []).length === 0 && (
+                  <p className="py-8 text-center text-muted-foreground">Aucun avis pour le moment.</p>
+                )}
+              </div>
+            </motion.div>
+          )}
+
           {/* ============ AMBASSADORS ============ */}
           {activeTab === "ambassadors" && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
@@ -2088,7 +2201,9 @@ const AdminDashboard = () => {
                         <SelectItem value="courier">Livreur</SelectItem>
                       </SelectContent>
                     </Select>
-                    <Button className="w-full" onClick={handleCreateStaffAccount}>Créer le compte</Button>
+                    <Button className="w-full" disabled={creatingStaff} onClick={handleCreateStaffAccount}>
+                      {creatingStaff ? "Création…" : "Créer le compte"}
+                    </Button>
                   </div>
                   <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
                     {(staffMembers || []).slice(0, 15).map((member: any) => (

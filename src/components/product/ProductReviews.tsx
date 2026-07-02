@@ -53,9 +53,16 @@ const ProductReviews = ({ productId }: { productId: number }) => {
         const ext = imageFile.name.split(".").pop() || "jpg";
         const path = `reviews/${productId}/${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage.from("images").upload(path, imageFile, { upsert: true });
-        if (upErr) throw upErr;
-        const { data: pub } = supabase.storage.from("images").getPublicUrl(path);
-        imageUrl = pub.publicUrl;
+        if (upErr) {
+          console.warn("Review image upload failed:", upErr.message);
+          toast({
+            title: "Photo non envoyée",
+            description: "Votre avis sera publié sans photo.",
+          });
+        } else {
+          const { data: pub } = supabase.storage.from("images").getPublicUrl(path);
+          imageUrl = pub.publicUrl;
+        }
       }
 
       const { error } = await (supabase as any).from("product_reviews").insert({
@@ -74,7 +81,12 @@ const ProductReviews = ({ productId }: { productId: number }) => {
       setImageFile(null);
       loadReviews();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Impossible d'envoyer l'avis";
+      const msg =
+        err && typeof err === "object" && "message" in err
+          ? String((err as { message: string }).message)
+          : err instanceof Error
+            ? err.message
+            : "Impossible d'envoyer l'avis";
       toast({ title: "Erreur", description: msg, variant: "destructive" });
     } finally {
       setSubmitting(false);
