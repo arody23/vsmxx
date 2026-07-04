@@ -24,6 +24,7 @@ import ImageUploader from "@/components/admin/ImageUploader";
 import { VsmBrandMark } from "@/components/VsmBrandMark";
 import MultiImageUploader from "@/components/admin/MultiImageUploader";
 import { slugify } from "@/lib/slug";
+import { normalizeBarcode } from "@/lib/barcode";
 import { downloadBarcodeSvg } from "@/lib/barcode";
 import { getMerchandiseAmount, getCustomerPayableTotal } from "@/lib/orderAmounts";
 import { getTierDiscountPercent, getTierFromLabel } from "@/lib/ambassadorTiers";
@@ -87,7 +88,7 @@ const PRO_STATUS_COLORS: Record<string, string> = {
 };
 
 // =================== Product Form with Variants ===================
-interface VariantRow { color: string; size: string; stock: number; }
+interface VariantRow { color: string; size: string; stock: number; id?: number; barcode?: string | null; }
 
 const ProductForm = ({ product, onClose }: { product?: Tables<"products"> | null; onClose: () => void }) => {
   const createProduct = useCreateProduct();
@@ -119,7 +120,13 @@ const ProductForm = ({ product, onClose }: { product?: Tables<"products"> | null
       .then(({ data }) => {
         if (data) {
           setVariants(
-            data.map((v: any) => ({ color: v.color, size: v.size, stock: v.stock }))
+            data.map((v: any) => ({
+              id: v.id,
+              color: v.color,
+              size: v.size,
+              stock: v.stock,
+              barcode: v.barcode,
+            }))
           );
         }
         setVariantsLoaded(true);
@@ -146,7 +153,9 @@ const ProductForm = ({ product, onClose }: { product?: Tables<"products"> | null
     const payload = {
       name: form.name, description: form.description || null, price: form.price ? Number(form.price) : null,
       category: form.category || null, image_url: mainImage, images: form.images.length > 0 ? form.images : null,
-      stock: totalStock, sku: form.sku || null, slug: form.slug || slugify(form.name), is_active: form.is_active,
+      stock: totalStock, sku: form.sku || null,
+      slug: (form.slug || slugify(form.name)).trim() || `produit-${product?.id ?? "new"}`,
+      is_active: form.is_active,
     };
     try {
       let productId: number;
@@ -157,18 +166,52 @@ const ProductForm = ({ product, onClose }: { product?: Tables<"products"> | null
         const created = await createProduct.mutateAsync(payload);
         productId = created.id;
       }
-      await supabase.from("product_variants").delete().eq("product_id", productId);
-      if (variants.length > 0) {
-        const { error } = await supabase.from("product_variants").insert(
-          variants.map(v => ({ product_id: productId, color: v.color, size: v.size, stock: v.stock }))
-        );
-        if (error) throw error;
+
+      const { data: existingVariants, error: loadVarErr } = await supabase
+        .from("product_variants")
+        .select("id, color, size, stock, barcode")
+        .eq("product_id", productId);
+      if (loadVarErr) throw loadVarErr;
+
+      const existing = existingVariants || [];
+      const keepKeys = new Set(variants.map((v) => `${v.color}|${v.size}`));
+
+      for (const variant of variants) {
+        const match = existing.find((e) => e.color === variant.color && e.size === variant.size);
+        if (match) {
+          const { error } = await supabase
+            .from("product_variants")
+            .update({ stock: variant.stock })
+            .eq("id", match.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from("product_variants").insert({
+            product_id: productId,
+            color: variant.color,
+            size: variant.size,
+            stock: variant.stock,
+          });
+          if (error) throw error;
+        }
+      }
+
+      for (const old of existing) {
+        if (!keepKeys.has(`${old.color}|${old.size}`)) {
+          const { error } = await supabase.from("product_variants").delete().eq("id", old.id);
+          if (error) throw error;
+        }
       }
       toast({ title: product ? "Produit mis à jour" : "Produit créé" });
       queryClient.invalidateQueries({ queryKey: ["products"] });
       onClose();
     } catch (err: any) {
-      toast({ title: "Erreur", description: err.message, variant: "destructive" });
+      const msg = String(err?.message || "Erreur");
+      const description = msg.includes("products_slug_key")
+        ? "Ce slug URL est déjà utilisé par un autre produit."
+        : msg.includes("slug")
+          ? "Impossible d'enregistrer le slug. Réessayez avec une URL différente."
+          : msg;
+      toast({ title: "Erreur", description, variant: "destructive" });
     }
   };
 
@@ -1063,7 +1106,7 @@ const AdminDashboard = () => {
   };
   const handleAdminScan = async (e: React.FormEvent) => {
     e.preventDefault();
-    const code = adminScanCode.trim();
+    const code = normalizeBarcode(adminScanCode);
     if (!code) return;
     const { data, error } = await (supabase as any).rpc("lookup_variant_by_barcode", { p_barcode: code });
     if (error || !data?.[0]) {

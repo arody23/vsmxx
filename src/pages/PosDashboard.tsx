@@ -23,6 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStaffAuth } from "@/hooks/useStaffAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
+import { normalizeBarcode } from "@/lib/barcode";
 
 interface CartLine {
   variant_id: number;
@@ -162,14 +163,18 @@ const PosDashboard = () => {
   };
 
   const lookupAndAddBarcode = useCallback(async (code: string) => {
-    const trimmed = code.trim();
+    const trimmed = normalizeBarcode(code);
     if (!trimmed) return false;
 
     const { data, error } = await (supabase as any).rpc("lookup_variant_by_barcode", {
       p_barcode: trimmed,
     });
     if (error || !data?.[0]) {
-      toast({ title: "Produit introuvable", description: "Code-barres non reconnu.", variant: "destructive" });
+      toast({
+        title: "Produit introuvable",
+        description: `Code « ${trimmed} » non reconnu. Vérifiez l'étiquette ou le stock admin.`,
+        variant: "destructive",
+      });
       return false;
     }
 
