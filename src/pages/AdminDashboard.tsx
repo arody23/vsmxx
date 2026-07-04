@@ -926,13 +926,80 @@ const AdminDashboard = () => {
     };
   }, [user, isAdmin, queryClient]);
 
-  const [dzForm, setDzForm] = useState({ name: "", city: "", price: "" });
+  const [dzForm, setDzForm] = useState({ name: "", city: "Kinshasa", price: "", zone_type: "moyenne" });
+  const [dzDrafts, setDzDrafts] = useState<Record<number, { name: string; city: string; price: string; zone_type: string }>>({});
+  const [savingDzId, setSavingDzId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!deliveryZones) return;
+    const next: Record<number, { name: string; city: string; price: string; zone_type: string }> = {};
+    deliveryZones.forEach((dz: any) => {
+      next[dz.id] = {
+        name: dz.name,
+        city: dz.city || "Kinshasa",
+        price: String(dz.price ?? ""),
+        zone_type: dz.zone_type || "moyenne",
+      };
+    });
+    setDzDrafts(next);
+  }, [deliveryZones]);
+
   const handleCreateDZ = async () => {
-    if (!dzForm.name) return;
-    const { error } = await supabase.from("delivery_zones").insert({ name: dzForm.name, city: dzForm.city || null, price: dzForm.price ? Number(dzForm.price) : null });
-    if (error) { toast({ title: "Erreur", description: error.message, variant: "destructive" }); return; }
-    toast({ title: "Zone créée" }); setDzForm({ name: "", city: "", price: "" });
+    if (!dzForm.name.trim()) {
+      toast({ title: "Commune requise", variant: "destructive" });
+      return;
+    }
+    const price = Number(dzForm.price);
+    if (!Number.isFinite(price) || price < 0) {
+      toast({ title: "Prix invalide", variant: "destructive" });
+      return;
+    }
+    const { error } = await supabase.from("delivery_zones").insert({
+      name: dzForm.name.trim(),
+      city: dzForm.city.trim() || "Kinshasa",
+      price,
+      zone_type: dzForm.zone_type || null,
+      is_active: true,
+    });
+    if (error) {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Commune ajoutée" });
+    setDzForm({ name: "", city: "Kinshasa", price: "", zone_type: "moyenne" });
     queryClient.invalidateQueries({ queryKey: ["admin-delivery"] });
+    queryClient.invalidateQueries({ queryKey: ["delivery-zones"] });
+  };
+
+  const handleUpdateDZ = async (id: number) => {
+    const draft = dzDrafts[id];
+    if (!draft?.name.trim()) {
+      toast({ title: "Nom requis", variant: "destructive" });
+      return;
+    }
+    const price = Number(draft.price);
+    if (!Number.isFinite(price) || price < 0) {
+      toast({ title: "Prix invalide", variant: "destructive" });
+      return;
+    }
+    setSavingDzId(id);
+    const { error } = await supabase
+      .from("delivery_zones")
+      .update({
+        name: draft.name.trim(),
+        city: draft.city.trim() || "Kinshasa",
+        price,
+        zone_type: draft.zone_type || null,
+      })
+      .eq("id", id);
+    setSavingDzId(null);
+    if (error) {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Zone mise à jour" });
+    queryClient.invalidateQueries({ queryKey: ["admin-delivery"] });
+    queryClient.invalidateQueries({ queryKey: ["delivery-zones"] });
   };
   const handleAppStatus = async (id: number, status: string) => {
     const { error } = await supabase.from("ambassador_applications").update({ status }).eq("id", id);
@@ -1045,13 +1112,24 @@ const AdminDashboard = () => {
     queryClient.invalidateQueries({ queryKey: ["admin-withdrawals"] });
   };
   const handleToggleDZ = async (id: number, is_active: boolean) => {
-    await supabase.from("delivery_zones").update({ is_active }).eq("id", id);
+    const { error } = await supabase.from("delivery_zones").update({ is_active }).eq("id", id);
+    if (error) {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+      return;
+    }
     queryClient.invalidateQueries({ queryKey: ["admin-delivery"] });
+    queryClient.invalidateQueries({ queryKey: ["delivery-zones"] });
   };
   const handleDeleteDZ = async (id: number) => {
     if (!confirm("Supprimer cette zone ?")) return;
-    await supabase.from("delivery_zones").delete().eq("id", id);
+    const { error } = await supabase.from("delivery_zones").delete().eq("id", id);
+    if (error) {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Zone supprimée" });
     queryClient.invalidateQueries({ queryKey: ["admin-delivery"] });
+    queryClient.invalidateQueries({ queryKey: ["delivery-zones"] });
   };
   const handleCreateExpense = async () => {
     if (!expenseForm.title || !expenseForm.amount) return;
@@ -1825,39 +1903,106 @@ const AdminDashboard = () => {
           {/* ============ DELIVERY ============ */}
           {activeTab === "delivery" && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-              <h3 className="font-display text-xl font-bold">Zones de livraison</h3>
-              <div className="vsm-card p-6">
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <Input placeholder="Nom de la zone" value={dzForm.name} onChange={(e) => setDzForm({ ...dzForm, name: e.target.value })} />
+              <h3 className="font-display text-xl font-bold">Zones de livraison (communes)</h3>
+              <p className="text-sm text-muted-foreground">
+                Les prix modifiés ici s&apos;appliquent directement au checkout client.
+              </p>
+              <div className="vsm-card space-y-4 p-6">
+                <p className="font-display text-sm font-semibold uppercase tracking-wider">Ajouter une commune</p>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                  <Input placeholder="Commune (ex: Gombe)" value={dzForm.name} onChange={(e) => setDzForm({ ...dzForm, name: e.target.value })} />
                   <Input placeholder="Ville" value={dzForm.city} onChange={(e) => setDzForm({ ...dzForm, city: e.target.value })} />
-                  <div className="flex gap-2">
-                    <Input placeholder="Prix (FC)" type="number" value={dzForm.price} onChange={(e) => setDzForm({ ...dzForm, price: e.target.value })} />
-                    <Button onClick={handleCreateDZ}><Plus className="h-4 w-4" /></Button>
-                  </div>
+                  <Input placeholder="Prix (FC)" type="number" min={0} value={dzForm.price} onChange={(e) => setDzForm({ ...dzForm, price: e.target.value })} />
+                  <Select value={dzForm.zone_type} onValueChange={(v) => setDzForm({ ...dzForm, zone_type: v })}>
+                    <SelectTrigger><SelectValue placeholder="Zone" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="proche">Proche</SelectItem>
+                      <SelectItem value="moyenne">Moyenne</SelectItem>
+                      <SelectItem value="eloignee">Éloignée</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button className="gap-2" onClick={handleCreateDZ}>
+                    <Plus className="h-4 w-4" /> Ajouter
+                  </Button>
                 </div>
               </div>
-              <div className="vsm-card overflow-hidden">
-                <table className="w-full">
+              <div className="vsm-card overflow-x-auto">
+                <table className="w-full min-w-[760px]">
                   <thead className="border-b border-border bg-secondary"><tr>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Zone</th>
+                    <th className="px-4 py-3 text-left text-sm font-semibold">Commune</th>
                     <th className="px-4 py-3 text-left text-sm font-semibold">Ville</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Prix</th>
+                    <th className="px-4 py-3 text-left text-sm font-semibold">Prix (FC)</th>
+                    <th className="px-4 py-3 text-left text-sm font-semibold">Zone</th>
                     <th className="px-4 py-3 text-left text-sm font-semibold">Actif</th>
                     <th className="px-4 py-3 text-right text-sm font-semibold">Actions</th>
                   </tr></thead>
                   <tbody>
-                    {(deliveryZones || []).map((dz) => (
-                      <tr key={dz.id} className="border-b border-border last:border-0">
-                        <td className="px-4 py-4 font-medium">{dz.name}</td>
-                        <td className="px-4 py-4 text-muted-foreground">{dz.city || "—"}</td>
-                        <td className="px-4 py-4">{dz.price ? formatPrice(Number(dz.price)) : "—"}</td>
-                        <td className="px-4 py-4"><Switch checked={dz.is_active} onCheckedChange={(v) => handleToggleDZ(dz.id, v)} /></td>
-                        <td className="px-4 py-4 text-right"><button className="rounded-sm p-2 hover:bg-destructive/20" onClick={() => handleDeleteDZ(dz.id)}><Trash2 className="h-4 w-4 text-destructive" /></button></td>
-                      </tr>
-                    ))}
+                    {(deliveryZones || []).map((dz) => {
+                      const draft = dzDrafts[dz.id] || {
+                        name: dz.name,
+                        city: dz.city || "Kinshasa",
+                        price: String(dz.price ?? ""),
+                        zone_type: (dz as any).zone_type || "moyenne",
+                      };
+                      return (
+                        <tr key={dz.id} className="border-b border-border last:border-0">
+                          <td className="px-4 py-3">
+                            <Input
+                              value={draft.name}
+                              onChange={(e) => setDzDrafts((p) => ({ ...p, [dz.id]: { ...draft, name: e.target.value } }))}
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <Input
+                              value={draft.city}
+                              onChange={(e) => setDzDrafts((p) => ({ ...p, [dz.id]: { ...draft, city: e.target.value } }))}
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <Input
+                              type="number"
+                              min={0}
+                              value={draft.price}
+                              onChange={(e) => setDzDrafts((p) => ({ ...p, [dz.id]: { ...draft, price: e.target.value } }))}
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <Select
+                              value={draft.zone_type}
+                              onValueChange={(v) => setDzDrafts((p) => ({ ...p, [dz.id]: { ...draft, zone_type: v } }))}
+                            >
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="proche">Proche</SelectItem>
+                                <SelectItem value="moyenne">Moyenne</SelectItem>
+                                <SelectItem value="eloignee">Éloignée</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </td>
+                          <td className="px-4 py-3">
+                            <Switch checked={dz.is_active} onCheckedChange={(v) => handleToggleDZ(dz.id, v)} />
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                disabled={savingDzId === dz.id}
+                                onClick={() => handleUpdateDZ(dz.id)}
+                              >
+                                {savingDzId === dz.id ? "…" : "Enregistrer"}
+                              </Button>
+                              <button type="button" className="rounded-sm p-2 hover:bg-destructive/20" onClick={() => handleDeleteDZ(dz.id)}>
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
-                {(deliveryZones || []).length === 0 && <p className="py-8 text-center text-muted-foreground">Aucune zone.</p>}
+                {(deliveryZones || []).length === 0 && <p className="py-8 text-center text-muted-foreground">Aucune zone. Ajoutez une commune ci-dessus.</p>}
               </div>
             </motion.div>
           )}

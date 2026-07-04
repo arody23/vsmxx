@@ -183,24 +183,30 @@ export type Database = {
       delivery_zones: {
         Row: {
           city: string | null
+          created_at?: string | null
           id: number
           is_active: boolean
           name: string
           price: number | null
+          zone_type: string | null
         }
         Insert: {
           city?: string | null
+          created_at?: string | null
           id?: number
           is_active?: boolean
           name: string
           price?: number | null
+          zone_type?: string | null
         }
         Update: {
           city?: string | null
+          created_at?: string | null
           id?: number
           is_active?: boolean
           name?: string
           price?: number | null
+          zone_type?: string | null
         }
         Relationships: []
       }

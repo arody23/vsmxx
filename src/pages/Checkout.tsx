@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { useCart } from "@/context/CartContext";
 import { provinces, kinshasaCommunes } from "@/data/store";
+import { useDeliveryCommunes } from "@/hooks/useDeliveryZones";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -46,12 +47,19 @@ const Checkout = () => {
 
   const isKinshasa = formData.province === "Kinshasa";
 
+  const { data: deliveryCommunes = kinshasaCommunes.map((c) => ({
+    name: c.name,
+    city: "Kinshasa",
+    deliveryFee: c.deliveryFee,
+    zone: c.zone,
+  })), isLoading: loadingCommunes } = useDeliveryCommunes("Kinshasa");
+
   const selectedCommune = useMemo(() => {
     if (isKinshasa && formData.commune) {
-      return kinshasaCommunes.find((c) => c.name === formData.commune);
+      return deliveryCommunes.find((c) => c.name === formData.commune);
     }
     return null;
-  }, [isKinshasa, formData.commune]);
+  }, [isKinshasa, formData.commune, deliveryCommunes]);
 
   const subtotal = items.reduce(
     (total, item) => total + item.price * item.quantity,
@@ -379,7 +387,7 @@ const Checkout = () => {
                         <SelectValue placeholder="Sélectionnez votre commune" />
                       </SelectTrigger>
                       <SelectContent>
-                        {kinshasaCommunes.map((commune) => (
+                        {deliveryCommunes.map((commune) => (
                           <SelectItem key={commune.name} value={commune.name}>
                             {commune.name} - {isFreeDelivery ? "GRATUIT" : formatPrice(commune.deliveryFee)}
                           </SelectItem>
