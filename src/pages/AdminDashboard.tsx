@@ -927,22 +927,14 @@ const AdminDashboard = () => {
   }, [user, isAdmin, queryClient]);
 
   const [dzForm, setDzForm] = useState({ name: "", city: "Kinshasa", price: "", zone_type: "moyenne" });
-  const [dzDrafts, setDzDrafts] = useState<Record<number, { name: string; city: string; price: string; zone_type: string }>>({});
+  const [editingDz, setEditingDz] = useState<{
+    id: number;
+    name: string;
+    city: string;
+    price: string;
+    zone_type: string;
+  } | null>(null);
   const [savingDzId, setSavingDzId] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!deliveryZones) return;
-    const next: Record<number, { name: string; city: string; price: string; zone_type: string }> = {};
-    deliveryZones.forEach((dz: any) => {
-      next[dz.id] = {
-        name: dz.name,
-        city: dz.city || "Kinshasa",
-        price: String(dz.price ?? ""),
-        zone_type: dz.zone_type || "moyenne",
-      };
-    });
-    setDzDrafts(next);
-  }, [deliveryZones]);
 
   const handleCreateDZ = async () => {
     if (!dzForm.name.trim()) {
@@ -971,33 +963,44 @@ const AdminDashboard = () => {
     queryClient.invalidateQueries({ queryKey: ["delivery-zones"] });
   };
 
-  const handleUpdateDZ = async (id: number) => {
-    const draft = dzDrafts[id];
-    if (!draft?.name.trim()) {
-      toast({ title: "Nom requis", variant: "destructive" });
+  const openEditDZ = (dz: any) => {
+    setEditingDz({
+      id: dz.id,
+      name: dz.name,
+      city: dz.city || "Kinshasa",
+      price: String(dz.price ?? ""),
+      zone_type: dz.zone_type || "moyenne",
+    });
+  };
+
+  const handleUpdateDZ = async () => {
+    if (!editingDz) return;
+    if (!editingDz.name.trim()) {
+      toast({ title: "Commune requise", variant: "destructive" });
       return;
     }
-    const price = Number(draft.price);
+    const price = Number(editingDz.price);
     if (!Number.isFinite(price) || price < 0) {
       toast({ title: "Prix invalide", variant: "destructive" });
       return;
     }
-    setSavingDzId(id);
+    setSavingDzId(editingDz.id);
     const { error } = await supabase
       .from("delivery_zones")
       .update({
-        name: draft.name.trim(),
-        city: draft.city.trim() || "Kinshasa",
+        name: editingDz.name.trim(),
+        city: editingDz.city.trim() || "Kinshasa",
         price,
-        zone_type: draft.zone_type || null,
+        zone_type: editingDz.zone_type || null,
       })
-      .eq("id", id);
+      .eq("id", editingDz.id);
     setSavingDzId(null);
     if (error) {
       toast({ title: "Erreur", description: error.message, variant: "destructive" });
       return;
     }
-    toast({ title: "Zone mise à jour" });
+    toast({ title: "Zone modifiée", description: `${editingDz.name} — ${price.toLocaleString("fr-CD")} FC` });
+    setEditingDz(null);
     queryClient.invalidateQueries({ queryKey: ["admin-delivery"] });
     queryClient.invalidateQueries({ queryKey: ["delivery-zones"] });
   };
@@ -1905,8 +1908,9 @@ const AdminDashboard = () => {
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
               <h3 className="font-display text-xl font-bold">Zones de livraison (communes)</h3>
               <p className="text-sm text-muted-foreground">
-                Les prix modifiés ici s&apos;appliquent directement au checkout client.
+                Cliquez sur <strong>Modifier</strong> pour changer le prix ou le nom d&apos;une commune. Les changements s&apos;appliquent au checkout.
               </p>
+
               <div className="vsm-card space-y-4 p-6">
                 <p className="font-display text-sm font-semibold uppercase tracking-wider">Ajouter une commune</p>
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
@@ -1926,84 +1930,103 @@ const AdminDashboard = () => {
                   </Button>
                 </div>
               </div>
-              <div className="vsm-card overflow-x-auto">
-                <table className="w-full min-w-[760px]">
-                  <thead className="border-b border-border bg-secondary"><tr>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Commune</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Ville</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Prix (FC)</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Zone</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Actif</th>
-                    <th className="px-4 py-3 text-right text-sm font-semibold">Actions</th>
-                  </tr></thead>
-                  <tbody>
-                    {(deliveryZones || []).map((dz) => {
-                      const draft = dzDrafts[dz.id] || {
-                        name: dz.name,
-                        city: dz.city || "Kinshasa",
-                        price: String(dz.price ?? ""),
-                        zone_type: (dz as any).zone_type || "moyenne",
-                      };
-                      return (
-                        <tr key={dz.id} className="border-b border-border last:border-0">
-                          <td className="px-4 py-3">
-                            <Input
-                              value={draft.name}
-                              onChange={(e) => setDzDrafts((p) => ({ ...p, [dz.id]: { ...draft, name: e.target.value } }))}
-                            />
-                          </td>
-                          <td className="px-4 py-3">
-                            <Input
-                              value={draft.city}
-                              onChange={(e) => setDzDrafts((p) => ({ ...p, [dz.id]: { ...draft, city: e.target.value } }))}
-                            />
-                          </td>
-                          <td className="px-4 py-3">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={draft.price}
-                              onChange={(e) => setDzDrafts((p) => ({ ...p, [dz.id]: { ...draft, price: e.target.value } }))}
-                            />
-                          </td>
-                          <td className="px-4 py-3">
-                            <Select
-                              value={draft.zone_type}
-                              onValueChange={(v) => setDzDrafts((p) => ({ ...p, [dz.id]: { ...draft, zone_type: v } }))}
-                            >
-                              <SelectTrigger><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="proche">Proche</SelectItem>
-                                <SelectItem value="moyenne">Moyenne</SelectItem>
-                                <SelectItem value="eloignee">Éloignée</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </td>
-                          <td className="px-4 py-3">
-                            <Switch checked={dz.is_active} onCheckedChange={(v) => handleToggleDZ(dz.id, v)} />
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex justify-end gap-2">
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                disabled={savingDzId === dz.id}
-                                onClick={() => handleUpdateDZ(dz.id)}
-                              >
-                                {savingDzId === dz.id ? "…" : "Enregistrer"}
-                              </Button>
-                              <button type="button" className="rounded-sm p-2 hover:bg-destructive/20" onClick={() => handleDeleteDZ(dz.id)}>
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {(deliveryZones || []).length === 0 && <p className="py-8 text-center text-muted-foreground">Aucune zone. Ajoutez une commune ci-dessus.</p>}
+
+              <Dialog open={!!editingDz} onOpenChange={(open) => !open && setEditingDz(null)}>
+                <DialogContent className="max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Modifier la zone de livraison</DialogTitle>
+                  </DialogHeader>
+                  {editingDz && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Commune</label>
+                        <Input
+                          value={editingDz.name}
+                          onChange={(e) => setEditingDz({ ...editingDz, name: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Ville</label>
+                        <Input
+                          value={editingDz.city}
+                          onChange={(e) => setEditingDz({ ...editingDz, city: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Prix livraison (FC)</label>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={editingDz.price}
+                          onChange={(e) => setEditingDz({ ...editingDz, price: e.target.value })}
+                          placeholder="Ex: 11000"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Type de zone</label>
+                        <Select
+                          value={editingDz.zone_type}
+                          onValueChange={(v) => setEditingDz({ ...editingDz, zone_type: v })}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="proche">Proche</SelectItem>
+                            <SelectItem value="moyenne">Moyenne</SelectItem>
+                            <SelectItem value="eloignee">Éloignée</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex gap-2 pt-2">
+                        <Button className="flex-1 gap-2" disabled={savingDzId === editingDz.id} onClick={handleUpdateDZ}>
+                          <Save className="h-4 w-4" />
+                          {savingDzId === editingDz.id ? "Enregistrement…" : "Enregistrer les modifications"}
+                        </Button>
+                        <Button variant="outline" onClick={() => setEditingDz(null)}>Annuler</Button>
+                      </div>
+                    </div>
+                  )}
+                </DialogContent>
+              </Dialog>
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {(deliveryZones || []).map((dz) => (
+                  <div key={dz.id} className="vsm-card flex flex-col gap-3 p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-display font-bold">{dz.name}</p>
+                        <p className="text-xs text-muted-foreground">{dz.city || "Kinshasa"}</p>
+                      </div>
+                      <Badge variant={dz.is_active ? "default" : "secondary"}>
+                        {dz.is_active ? "Actif" : "Inactif"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between rounded-sm border border-border bg-secondary/40 px-3 py-2">
+                      <span className="text-sm text-muted-foreground">Prix livraison</span>
+                      <span className="font-display text-lg font-bold text-primary">
+                        {formatPrice(Number(dz.price || 0))}
+                      </span>
+                    </div>
+                    {(dz as any).zone_type && (
+                      <p className="text-xs capitalize text-muted-foreground">Zone {(dz as any).zone_type}</p>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+                      <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => openEditDZ(dz)}>
+                        <Edit className="h-3.5 w-3.5" /> Modifier
+                      </Button>
+                      <div className="flex items-center gap-2 text-sm">
+                        <Switch checked={dz.is_active} onCheckedChange={(v) => handleToggleDZ(dz.id, v)} />
+                        <span className="text-muted-foreground">Actif</span>
+                      </div>
+                      <Button size="sm" variant="ghost" className="ml-auto text-destructive hover:text-destructive" onClick={() => handleDeleteDZ(dz.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
+              {(deliveryZones || []).length === 0 && (
+                <p className="py-8 text-center text-muted-foreground">Aucune zone. Ajoutez une commune ci-dessus.</p>
+              )}
             </motion.div>
           )}
 
