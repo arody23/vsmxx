@@ -128,13 +128,13 @@ const HeroSlider = () => {
             className="absolute inset-0 bg-cover bg-center"
             style={{ backgroundImage: `url(${slides[currentSlide].image})` }}
           />
-          <div className="absolute inset-0 bg-gradient-to-r from-background via-background/70 to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-r from-background/85 via-background/40 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/20 to-transparent" />
         </motion.div>
       </AnimatePresence>
 
-      <div className="vsm-container relative z-10 flex h-full items-center">
-        <div className="max-w-2xl space-y-6">
+      <div className="vsm-container relative z-10 flex h-full items-end pb-28 md:pb-36 lg:pb-40">
+        <div className="max-w-2xl space-y-6 pb-2">
           <AnimatePresence mode="wait">
             <motion.div
               key={slides[currentSlide].id}
