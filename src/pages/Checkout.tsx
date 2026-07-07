@@ -186,46 +186,69 @@ const Checkout = () => {
         throw new Error("Commande créée mais identifiant introuvable.");
       }
 
-      // Build WhatsApp message
+      // Message WhatsApp — ton client naturel, sans emojis (compatibilité encodage)
       const productList = items
-        .map(
-          (item) =>
-            `• ${item.name}${item.size ? ` (Taille: ${item.size})` : ""}${item.color ? ` (Couleur: ${item.color})` : ""} x${item.quantity} - ${formatPrice(item.price * item.quantity)}`
-        )
+        .map((item) => {
+          const details = [item.size && `Taille ${item.size}`, item.color && `Couleur ${item.color}`]
+            .filter(Boolean)
+            .join(", ");
+          return `- ${item.name}${details ? ` (${details})` : ""} x${item.quantity} — ${formatPrice(item.price * item.quantity)}`;
+        })
         .join("\n");
 
-      const locationInfo = isKinshasa
-        ? `📍 Commune: ${formData.commune}, Kinshasa`
-        : `📍 ${formData.city}, ${formData.province}`;
+      const deliveryLines: string[] = [];
+      if (isKinshasa) {
+        deliveryLines.push(`Commune : ${formData.commune}, Kinshasa`);
+      } else {
+        deliveryLines.push(`Ville : ${formData.city}, ${formData.province}`);
+      }
+      if (formData.deliveryDate) {
+        const dateLabel = new Date(formData.deliveryDate).toLocaleDateString("fr-FR", {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        });
+        deliveryLines.push(
+          formData.deliveryTime
+            ? `Livraison souhaitée : ${dateLabel} à ${formData.deliveryTime}`
+            : `Livraison souhaitée : ${dateLabel}`
+        );
+      } else if (formData.deliveryTime) {
+        deliveryLines.push(`Heure souhaitée : ${formData.deliveryTime}`);
+      }
 
-      const deliveryInfo = isFreeDelivery
-        ? `🎁 Livraison OFFERTE (commande > ${formatPrice(FREE_DELIVERY_THRESHOLD_FC)})`
-        : isKinshasa
-          ? `🚚 Frais de livraison: ${formatPrice(deliveryFee)}`
-          : `🚚 Livraison via agence partenaire`;
+      const summaryLines: string[] = [`Sous-total : ${formatPrice(subtotal)}`];
+      if (promoDiscount > 0) {
+        summaryLines.push(`Réduction${promoCode ? ` (${promoCode})` : ""} : -${formatPrice(promoDiscount)}`);
+      }
+      if (isFreeDelivery) {
+        summaryLines.push("Livraison : offerte");
+      } else if (deliveryFee > 0) {
+        summaryLines.push(`Livraison : ${formatPrice(deliveryFee)}`);
+      } else if (!isKinshasa) {
+        summaryLines.push("Livraison : via agence partenaire");
+      }
+      summaryLines.push(`Total : ${formatPrice(totalWithDelivery)}`);
 
-      const deliveryDateInfo = formData.deliveryDate
-        ? `📅 Date souhaitée: ${new Date(formData.deliveryDate).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}`
-        : "";
-      const deliveryTimeInfo = formData.deliveryTime
-        ? `🕒 Heure souhaitée: ${formData.deliveryTime}`
-        : "";
+      const messageParts = [
+        "Bonjour VSM Collection,",
+        "",
+        "Je souhaite passer une commande :",
+        "",
+        productList,
+        "",
+        "Mes coordonnées :",
+        `Nom : ${formData.fullName}`,
+        `Téléphone : ${formData.phone}`,
+        ...deliveryLines,
+      ];
+      if (formData.instructions?.trim()) {
+        messageParts.push("", `Instructions : ${formData.instructions.trim()}`);
+      }
+      messageParts.push("", ...summaryLines, "", "Merci.");
 
-      const message = encodeURIComponent(
-        `🛍️ *NOUVELLE COMMANDE VSM #${savedOrderId}*\n\n` +
-          `👤 *Client:* ${formData.fullName}\n` +
-          `📞 *Téléphone:* ${formData.phone}\n` +
-          `${locationInfo}\n` +
-          `${deliveryDateInfo ? deliveryDateInfo + "\n" : ""}` +
-          `${deliveryTimeInfo ? deliveryTimeInfo + "\n" : ""}` +
-          `${formData.instructions ? `📝 Instructions: ${formData.instructions}\n` : ""}` +
-          `\n📦 *ARTICLES:*\n${productList}\n\n` +
-          `💰 Sous-total: ${formatPrice(subtotal)}\n` +
-          `${promoDiscount > 0 ? `🏷️ Réduction (${promoCode}): -${formatPrice(promoDiscount)}\n` : ""}` +
-          `${deliveryInfo}\n` +
-          `\n💵 *TOTAL: ${formatPrice(totalWithDelivery)}*\n\n` +
-          `Merci pour votre commande! 🙏`
-      );
+      const message = encodeURIComponent(messageParts.join("\n"));
 
       const whatsappNumber = "243976028479";
       const whatsappUrl = `https://api.whatsapp.com/send?phone=${whatsappNumber}&text=${message}`;
